@@ -304,6 +304,21 @@ pre {
   font-size: 12px;
 }
 
+.usage-account {
+  display: grid;
+  gap: 8px;
+}
+
+.usage-account-title {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.usage-account > .muted {
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .bar {
   width: 100%;
   height: 6px;

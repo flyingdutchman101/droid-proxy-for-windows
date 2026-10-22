@@ -7,7 +7,7 @@ contextBridge.exposeInMainWorld("droidProxy", {
   stopProxy: () => ipcRenderer.invoke("proxy:stop"),
   proxyState: () => ipcRenderer.invoke("proxy:state"),
   getLogs: () => ipcRenderer.invoke("logs:get"),
-  login: () => ipcRenderer.invoke("auth:login"),
+  login: (provider) => ipcRenderer.invoke("auth:login", provider),
   accounts: () => ipcRenderer.invoke("auth:accounts"),
   usage: (accountId) => ipcRenderer.invoke("usage:fetch", accountId),
   factoryStatus: () => ipcRenderer.invoke("factory:status"),
@@ -15,5 +15,6 @@ contextBridge.exposeInMainWorld("droidProxy", {
   openAuthFolder: () => ipcRenderer.invoke("paths:openAuth"),
   openFactoryFolder: () => ipcRenderer.invoke("paths:openFactory"),
   onProxyState: (callback) => ipcRenderer.on("state:proxy", (_event, state) => callback(state)),
-  onLogs: (callback) => ipcRenderer.on("state:logs", (_event, logs) => callback(logs))
+  onLogs: (callback) => ipcRenderer.on("state:logs", (_event, logs) => callback(logs)),
+  onAccountsChanged: (callback) => ipcRenderer.on("state:accountsChanged", () => callback())
 });

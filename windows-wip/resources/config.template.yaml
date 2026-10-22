@@ -28,11 +28,7 @@ quota-exceeded:
 generative-language-api-key: []
 
 oauth-excluded-models:
-  claude:
-    - "*"
   gemini:
-    - "*"
-  antigravity:
     - "*"
   kimi:
     - "*"

@@ -25,5 +25,6 @@ Use `npm run check` as the default validator for code changes.
 
 - Treat `src/` and `resources/` as the source of truth.
 - Do not edit `node_modules/`, `dist/`, or packaged build outputs.
-- Keep Factory custom-model writes GPT-only unless the Windows app scope changes.
+- Factory custom models cover Codex, Claude, and Gemini (Antigravity); keep model IDs aligned with `../src/Sources/DroidProxyModelCatalog.swift` and the backend's live `/v1/models`.
+- Claude request fixes live in `src/proxy.js`, mirroring `../src/Sources/ThinkingProxy.swift`.
 - Prefer small, Windows-specific changes that do not affect the repo root macOS app.

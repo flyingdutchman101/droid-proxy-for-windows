@@ -1,11 +1,11 @@
 {
   "name": "droidproxy-windows",
   "version": "0.1.1",
-  "description": "GPT-only DroidProxy wrapper for Windows and Factory custom models.",
+  "description": "Droid Proxy for Windows: Codex, Claude, and Gemini OAuth proxy for Factory custom models.",
   "main": "src/main.js",
   "scripts": {
     "start": "electron .",
-    "check": "node --check src/main.js && node --check src/preload.js && node --check src/renderer/app.js",
+    "check": "node --check src/main.js && node --check src/proxy.js && node --check src/preload.js && node --check src/renderer/app.js",
     "build:win": "electron-builder --win portable"
   },
   "keywords": [

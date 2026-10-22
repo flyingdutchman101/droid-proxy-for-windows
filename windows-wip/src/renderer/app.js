@@ -60,28 +60,33 @@ function renderAccounts(accounts) {
   currentAccounts = accounts;
   if (!accounts.length) {
     elements.accounts.className = "list muted";
-    elements.accounts.textContent = "No Codex account found.";
+    elements.accounts.textContent = "No account connected.";
     return;
   }
 
   elements.accounts.className = "list";
   elements.accounts.innerHTML = accounts.map((account) => `
     <div class="account">
-      <strong>${escapeHtml(account.email)}</strong>
+      <strong>${escapeHtml(account.providerLabel)} · ${escapeHtml(account.email)}</strong>
       <span>${account.disabled ? "Disabled" : account.isExpired ? "Expired" : "Ready"} · ${escapeHtml(account.id)}</span>
     </div>
   `).join("");
 }
 
-function renderUsage(windows) {
-  if (!windows.length) {
-    elements.usage.className = "list muted";
-    elements.usage.textContent = "Usage response did not include quota windows.";
-    return;
-  }
-
+function renderUsage(results) {
   elements.usage.className = "list";
-  elements.usage.innerHTML = windows.map((window) => {
+  elements.usage.innerHTML = results.map(({ account, windows, error }) => `
+    <div class="usage-account">
+      <div class="usage-account-title">${escapeHtml(account.providerLabel)} · ${escapeHtml(account.email)}</div>
+      ${error ? `<span class="muted">${escapeHtml(error)}</span>`
+        : windows.length ? renderUsageWindows(windows)
+        : `<span class="muted">Usage response did not include quota windows.</span>`}
+    </div>
+  `).join("");
+}
+
+function renderUsageWindows(windows) {
+  return windows.map((window) => {
     const remaining = typeof window.remainingPercent === "number" ? Math.round(window.remainingPercent) : null;
     const low = remaining !== null && remaining < 20;
     return `
@@ -119,21 +124,30 @@ async function refreshAccounts() {
 
 async function refreshUsage() {
   const accounts = currentAccounts.length ? currentAccounts : await refreshAccounts();
-  const account = accounts.find((item) => !item.disabled && !item.isExpired && item.hasAccessToken);
-  if (!account) {
+  // Expired Claude tokens are refreshed by the usage fetch, so only skip disabled ones.
+  const usable = accounts.filter((item) => !item.disabled && item.hasAccessToken);
+  if (!usable.length) {
     elements.usage.className = "list muted";
-    elements.usage.textContent = "Connect Codex to display quota windows.";
+    elements.usage.textContent = "Connect an account to display quota windows.";
     return;
   }
 
   elements.usage.className = "list muted";
   elements.usage.textContent = "Fetching usage limits...";
-  try {
-    renderUsage(await api.usage(account.id));
-  } catch (error) {
-    elements.usage.className = "list muted";
-    elements.usage.textContent = error.message || String(error);
-  }
+  const order = ["codex", "claude", "antigravity"];
+  usable.sort((a, b) => order.indexOf(a.provider) - order.indexOf(b.provider));
+  renderUsage(await Promise.all(usable.map(async (account) => {
+    try {
+      return { account, windows: await api.usage(account.id) };
+    } catch (error) {
+      return { account, windows: [], error: cleanIpcError(error) };
+    }
+  })));
+}
+
+// Electron prefixes rejected IPC calls with "Error invoking remote method ...".
+function cleanIpcError(error) {
+  return String(error?.message || error).replace(/^Error invoking remote method '[^']+': (Error: )?/, "");
 }
 
 async function toggleServer() {
@@ -158,14 +172,17 @@ elements.copyEndpoint.addEventListener("click", async () => {
   }
 });
 
-document.querySelector("#login-btn").addEventListener("click", async () => {
-  try {
-    await api.login();
-    showToast("Browser opened for Codex login. Complete the sign-in, then refresh accounts.");
-    setTimeout(refreshAccounts, 2500);
-  } catch (error) {
-    showToast(error.message || String(error));
-  }
+document.querySelectorAll(".login-btn").forEach((button) => {
+  button.addEventListener("click", async () => {
+    const label = button.closest(".section-row").querySelector(".section-label span").textContent;
+    try {
+      await api.login(button.dataset.provider);
+      showToast(`Browser opened for ${label} login. Complete the sign-in, then refresh accounts.`);
+      setTimeout(refreshAccounts, 2500);
+    } catch (error) {
+      showToast(error.message || String(error));
+    }
+  });
 });
 
 document.querySelector("#refresh-accounts-btn").addEventListener("click", refreshAccounts);
@@ -188,6 +205,7 @@ document.querySelector("#clear-log-btn").addEventListener("click", () => {
 
 api.onProxyState(renderProxyState);
 api.onLogs(renderLogs);
+api.onAccountsChanged(() => refreshAccounts().then(refreshUsage));
 
 async function boot() {
   setSettingsForm(await api.getSettings());

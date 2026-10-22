@@ -1,5 +1,7 @@
 # DroidProxy
 
+> **Droid Proxy for Windows fork.** This fork adds a working Windows app in [`windows-wip/`](windows-wip/) with Codex, Claude, and Gemini support. See [`windows-wip/README.md`](windows-wip/README.md) to build and use it. Everything below describes the upstream macOS app from [nikships/droidproxy](https://github.com/nikships/droidproxy).
+
 <p align="center">
   <img src="logo.png" alt="DroidProxy" width="128">
 </p>
