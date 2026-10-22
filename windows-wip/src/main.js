@@ -6,6 +6,7 @@ const { spawn, execFile } = require("child_process");
 const { createFrontProxy } = require("./proxy");
 
 const APP_NAME = "DroidProxy Windows";
+const APP_USER_MODEL_ID = "io.automaze.droidproxy.windows";
 const AUTH_DIR = path.join(os.homedir(), ".cli-proxy-api");
 const SETTINGS_PATH = path.join(AUTH_DIR, "droidproxy-windows.json");
 const CONFIG_PATH = path.join(AUTH_DIR, "droidproxy-windows-config.yaml");
@@ -262,25 +263,51 @@ async function startProxy() {
 
   await startFrontProxy();
 
-  proxyProcess = spawn(binary, ["-config", CONFIG_PATH], {
+  const child = spawn(binary, ["-config", CONFIG_PATH], {
     cwd: path.dirname(binary),
     windowsHide: true,
     env: process.env
   });
+  proxyProcess = child;
 
-  log(`Started cli-proxy-api on ${settings.host}:${backendPort()} (PID ${proxyProcess.pid})`);
+  log(`Started cli-proxy-api on ${settings.host}:${backendPort()} (PID ${child.pid})`);
 
-  proxyProcess.stdout.on("data", (chunk) => log(chunk.toString().trim()));
-  proxyProcess.stderr.on("data", (chunk) => log(chunk.toString().trim()));
-  proxyProcess.on("exit", (code) => {
+  child.stdout.on("data", (chunk) => log(chunk.toString().trim()));
+  child.stderr.on("data", (chunk) => log(chunk.toString().trim()));
+  child.on("exit", (code) => {
     log(`cli-proxy-api exited with code ${code}`);
+    // stopProxy() clears proxyProcess first, so a match here means an unexpected exit.
+    const unexpected = proxyProcess === child;
     proxyProcess = null;
     stopFrontProxy();
     sendState();
+    if (unexpected && !isQuitting) scheduleProxyRestart();
   });
 
   sendState();
   return proxyState();
+}
+
+// Keep Factory's endpoint alive if the backend dies, but stop retrying if it
+// keeps crashing so a broken setup does not loop forever.
+const restartTimes = [];
+function scheduleProxyRestart() {
+  const now = Date.now();
+  while (restartTimes.length && now - restartTimes[0] > 5 * 60 * 1000) restartTimes.shift();
+  if (restartTimes.length >= 5) {
+    log("cli-proxy-api keeps exiting; not restarting again. Use Server status to start it.");
+    return;
+  }
+  restartTimes.push(now);
+  const delay = 2000 * restartTimes.length;
+  log(`Restarting cli-proxy-api in ${delay / 1000}s`);
+  setTimeout(() => {
+    if (isQuitting || proxyProcess) return;
+    startProxy().catch((error) => {
+      log(`Restart failed: ${error.message}`);
+      scheduleProxyRestart();
+    });
+  }, delay);
 }
 
 function startFrontProxy() {
@@ -717,6 +744,19 @@ function createWindow() {
     }
   });
 
+  // Pinning the running window would otherwise pin the temp-folder copy of this
+  // build, which keeps launching that stale build after updates.
+  const portableExe = process.env.PORTABLE_EXECUTABLE_FILE;
+  if (portableExe) {
+    mainWindow.setAppDetails({
+      appId: APP_USER_MODEL_ID,
+      relaunchCommand: `"${portableExe}"`,
+      relaunchDisplayName: APP_NAME,
+      appIconPath: portableExe,
+      appIconIndex: 0
+    });
+  }
+
   mainWindow.loadFile(path.join(__dirname, "renderer", "index.html"));
   // Closing the window hides it to the tray so Factory keeps reaching the proxy;
   // only the tray's Quit item really exits.
@@ -772,6 +812,8 @@ if (!hasInstanceLock) {
   });
 
   app.whenReady().then(async () => {
+    app.setAppUserModelId(APP_USER_MODEL_ID);
+    log(`Portable exe: ${process.env.PORTABLE_EXECUTABLE_FILE || "(not running from the portable exe)"}`);
     ensureDir(AUTH_DIR);
     // A leftover backend may be running from the runtime copy and lock it.
     await killOrphanedProxy();
