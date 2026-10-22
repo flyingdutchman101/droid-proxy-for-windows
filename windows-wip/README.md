@@ -11,6 +11,8 @@ Electron-based Windows app that runs the bundled [CLIProxyAPI](https://github.co
   - Claude Fable 5.1, Opus 5.5, Sonnet 5.5, Haiku 5.5
   - Gemini 3.8 Flash (High), Gemini 4 Argon (High)
 - Starts the proxy automatically when the app opens.
+- Closing the window hides it to the system tray and keeps the proxy running. Use the tray icon to reopen the window or **Quit**. Launching the exe again reopens the running instance instead of starting a second one.
+- Logs are also written to `%USERPROFILE%\.cli-proxy-api\droidproxy-windows.log`.
 - A small front proxy on the public port (default `8317`) applies the same Claude request fixes as the macOS app before forwarding to `cli-proxy-api` on the next port (`8318`):
   - Rewrites `Anthropic-Beta` so thinking stays visible and `fast-mode-*` never blocks account failover.
   - Strips stale assistant thinking blocks that Anthropic rejects on replay.

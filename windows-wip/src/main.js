@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, shell } = require("electron");
+const { app, BrowserWindow, ipcMain, shell, Tray, Menu } = require("electron");
 const path = require("path");
 const fs = require("fs");
 const os = require("os");
@@ -9,6 +9,7 @@ const APP_NAME = "DroidProxy Windows";
 const AUTH_DIR = path.join(os.homedir(), ".cli-proxy-api");
 const SETTINGS_PATH = path.join(AUTH_DIR, "droidproxy-windows.json");
 const CONFIG_PATH = path.join(AUTH_DIR, "droidproxy-windows-config.yaml");
+const LOG_PATH = path.join(AUTH_DIR, "droidproxy-windows.log");
 const FACTORY_SETTINGS_PATH = path.join(os.homedir(), ".factory", "settings.json");
 
 const DEFAULT_SETTINGS = {
@@ -82,14 +83,56 @@ const DROIDPROXY_MODEL_PREFIXES = ["custom:droidproxy:", "custom:CC:"];
 let mainWindow;
 let proxyProcess = null;
 let frontProxy = null;
+let tray = null;
+let trayHintShown = false;
+let isQuitting = false;
 let logs = [];
 let settings = loadSettings();
+let resourcesRoot = null;
+
+function bundledResourcesDir() {
+  if (app.isPackaged) {
+    return path.join(process.resourcesPath, "resources");
+  }
+  return path.join(__dirname, "..", "resources");
+}
 
 function getResourcePath(...parts) {
-  if (app.isPackaged) {
-    return path.join(process.resourcesPath, "resources", ...parts);
+  return path.join(resourcesRoot || bundledResourcesDir(), ...parts);
+}
+
+// The portable exe unpacks every launch into the same temp folder, and a second
+// launch deletes or overwrites the running instance's files there (including the
+// backend). Run from a private copy instead so relaunches cannot touch it.
+function syncRuntimeResources() {
+  const source = bundledResourcesDir();
+  if (!app.isPackaged) return source;
+
+  const target = path.join(app.getPath("userData"), "runtime");
+  const copyTree = (from, to) => {
+    ensureDir(to);
+    for (const entry of fs.readdirSync(from, { withFileTypes: true })) {
+      const src = path.join(from, entry.name);
+      const dst = path.join(to, entry.name);
+      if (entry.isDirectory()) {
+        copyTree(src, dst);
+        continue;
+      }
+      const srcStat = fs.statSync(src);
+      const dstStat = fs.existsSync(dst) ? fs.statSync(dst) : null;
+      if (dstStat && dstStat.size === srcStat.size && Math.abs(dstStat.mtimeMs - srcStat.mtimeMs) < 2000) continue;
+      fs.copyFileSync(src, dst);
+      fs.utimesSync(dst, srcStat.atime, srcStat.mtime);
+    }
+  };
+
+  try {
+    copyTree(source, target);
+    return target;
+  } catch (error) {
+    log(`Could not prepare runtime copy, using bundled resources: ${error.message}`);
+    return source;
   }
-  return path.join(__dirname, "..", "resources", ...parts);
 }
 
 function cliBinaryPath() {
@@ -162,10 +205,24 @@ function writeConfig() {
   return CONFIG_PATH;
 }
 
+// Also kept on disk so problems after the window was closed can be diagnosed.
+function appendLogFile(entry) {
+  try {
+    ensureDir(AUTH_DIR);
+    if (fs.existsSync(LOG_PATH) && fs.statSync(LOG_PATH).size > 2 * 1024 * 1024) {
+      fs.renameSync(LOG_PATH, `${LOG_PATH}.old`);
+    }
+    fs.appendFileSync(LOG_PATH, `${entry}\n`);
+  } catch {
+    // Logging must never break the app.
+  }
+}
+
 function log(line) {
   const stamp = new Date().toLocaleTimeString();
   logs.push(`[${stamp}] ${line}`);
   logs = logs.slice(-500);
+  appendLogFile(`[${new Date().toISOString()}] [pid ${process.pid}] ${line}`);
   if (mainWindow) {
     mainWindow.webContents.send("state:logs", logs);
   }
@@ -180,11 +237,13 @@ function proxyState() {
 }
 
 function sendState() {
+  updateTrayMenu();
   if (!mainWindow) return;
   mainWindow.webContents.send("state:proxy", proxyState());
 }
 
 function killOrphanedProxy() {
+  log("Stopping any leftover cli-proxy-api.exe before starting a new one");
   return new Promise((resolve) => {
     execFile("taskkill.exe", ["/IM", "cli-proxy-api.exe", "/F"], { windowsHide: true }, () => resolve());
   });
@@ -659,25 +718,75 @@ function createWindow() {
   });
 
   mainWindow.loadFile(path.join(__dirname, "renderer", "index.html"));
+  // Closing the window hides it to the tray so Factory keeps reaching the proxy;
+  // only the tray's Quit item really exits.
+  mainWindow.on("close", (event) => {
+    if (isQuitting) return;
+    event.preventDefault();
+    mainWindow.hide();
+    if (!trayHintShown && tray) {
+      trayHintShown = true;
+      tray.displayBalloon({ title: APP_NAME, content: "Still running in the tray. Right-click the icon to quit." });
+    }
+  });
   mainWindow.on("closed", () => {
     mainWindow = null;
   });
 }
 
-app.whenReady().then(() => {
-  ensureDir(AUTH_DIR);
-  writeConfig();
-  createWindow();
-  // Factory can't reach the custom models until the proxy is up, so start it right away.
-  startProxy().catch((error) => log(`Auto-start failed: ${error.message}`));
-});
+function showWindow() {
+  if (!mainWindow) createWindow();
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
+}
 
-app.on("window-all-closed", () => {
-  stopProxy();
-  if (process.platform !== "darwin") app.quit();
-});
+function createTray() {
+  tray = new Tray(getResourcePath("icon.ico"));
+  tray.setToolTip(APP_NAME);
+  tray.on("click", showWindow);
+  updateTrayMenu();
+}
+
+function updateTrayMenu() {
+  if (!tray) return;
+  const { running } = proxyState();
+  tray.setToolTip(`${APP_NAME} · ${running ? `running on ${settings.host}:${settings.port}` : "stopped"}`);
+  tray.setContextMenu(Menu.buildFromTemplate([
+    { label: running ? `Proxy running on ${settings.host}:${settings.port}` : "Proxy stopped", enabled: false },
+    { type: "separator" },
+    { label: "Open DroidProxy", click: showWindow },
+    { label: "Quit", click: () => { isQuitting = true; app.quit(); } }
+  ]));
+}
+
+// A second launch would kill this instance's backend and fail to bind the port.
+const hasInstanceLock = app.requestSingleInstanceLock();
+log(`App starting (single-instance lock ${hasInstanceLock ? "acquired" : "held by another instance, exiting"}; exe ${process.execPath})`);
+if (!hasInstanceLock) {
+  app.quit();
+} else {
+  app.on("second-instance", () => {
+    log("Another launch detected; showing the existing window");
+    showWindow();
+  });
+
+  app.whenReady().then(async () => {
+    ensureDir(AUTH_DIR);
+    // A leftover backend may be running from the runtime copy and lock it.
+    await killOrphanedProxy();
+    resourcesRoot = syncRuntimeResources();
+    log(`Using resources from ${resourcesRoot}`);
+    writeConfig();
+    createTray();
+    createWindow();
+    // Factory can't reach the custom models until the proxy is up, so start it right away.
+    startProxy().catch((error) => log(`Auto-start failed: ${error.message}`));
+  });
+}
 
 app.on("before-quit", () => {
+  isQuitting = true;
   stopProxy();
 });
 
