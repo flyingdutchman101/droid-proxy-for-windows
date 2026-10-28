@@ -14,6 +14,9 @@ const {
   DEFAULT_CATEGORY_MODELS,
   DEFAULT_CHAINS,
   DEFAULT_CLASSIFIER_MODELS,
+  DEFAULT_OVERFLOW_THRESHOLD,
+  DEFAULT_OVERFLOW_MODELS,
+  DEFAULT_MISSION_OVERFLOW_MODELS,
   createRouter
 } = require("./router");
 const { API_PROVIDERS, apiModelId, providerRegion, providerModels, regionForKey, apiKeysYaml } = require("./providers");
@@ -44,9 +47,14 @@ const DEFAULT_SETTINGS = {
   reasoningEffort: "medium",
   autoEnabled: true,
   categoryModels: DEFAULT_CATEGORY_MODELS,
-  // { [category]: { orchestrator|worker|validator: { model, backup } } }
+  // { [category]: { orchestrator|worker|validator: { model, backup, backup2 } } }
   roleModels: DEFAULT_ROLE_MODELS,
   classifierModels: DEFAULT_CLASSIFIER_MODELS,
+  // Balanced: pick within each pool by remaining subscription quota.
+  balanced: true,
+  overflowThreshold: DEFAULT_OVERFLOW_THRESHOLD,
+  overflowModels: DEFAULT_OVERFLOW_MODELS,
+  missionOverflowModels: DEFAULT_MISSION_OVERFLOW_MODELS,
   fallbackEnabled: true,
   fallbackChains: DEFAULT_CHAINS,
   // { [providerKey]: { region, keyEnc } }; keys are encrypted with Windows DPAPI.
@@ -249,6 +257,10 @@ function sanitizeSettings(value) {
       return [roleName, { model, backup: cleanBackup, backup2: backup2 === model || backup2 === cleanBackup ? "" : backup2 }];
     }))])),
     classifierModels: stringList(value.classifierModels, DEFAULT_CLASSIFIER_MODELS),
+    balanced: value.balanced !== false,
+    overflowThreshold: Number.isFinite(Number(value.overflowThreshold)) ? Math.min(100, Math.max(0, Number(value.overflowThreshold))) : DEFAULT_OVERFLOW_THRESHOLD,
+    overflowModels: stringList(value.overflowModels, DEFAULT_OVERFLOW_MODELS).slice(0, 4),
+    missionOverflowModels: stringList(value.missionOverflowModels, DEFAULT_MISSION_OVERFLOW_MODELS).slice(0, 4),
     fallbackEnabled: value.fallbackEnabled !== false,
     fallbackChains: Object.fromEntries(Object.entries(value.fallbackChains || DEFAULT_CHAINS)
       .filter(([model]) => typeof model === "string" && model)
@@ -480,7 +492,13 @@ function getRouter() {
       fallbackChains: settings.fallbackChains,
       categoryModels: settings.categoryModels,
       roleModels: settings.roleModels,
-      classifierModels: settings.classifierModels
+      classifierModels: settings.classifierModels,
+      balanced: settings.balanced,
+      overflowThreshold: settings.overflowThreshold,
+      overflowModels: settings.overflowModels,
+      missionOverflowModels: settings.missionOverflowModels,
+      quotaFor,
+      isAvailable: (model) => modelOptions().some((item) => item.id === model)
     }),
     onFallback: (from, to, until) => {
       const label = (id) => modelOptions().find((item) => item.id === id)?.label || id;
@@ -709,6 +727,55 @@ async function apiUsage() {
     }
     return result;
   }));
+}
+
+// Remaining quota per subscription pool, for balanced routing. Each value is
+// the tightest window's "% left"; with several accounts the best one counts,
+// since the backend rotates between them.
+const QUOTA_REFRESH_MS = 10 * 60 * 1000;
+let quotaCache = { buckets: {}, updatedAt: null };
+
+function quotaBucket(model) {
+  if (model.startsWith("ag-")) return "antigravity-claude";
+  if (model.startsWith("claude-")) return "claude";
+  if (model.startsWith("gpt-")) return "codex";
+  if (model.startsWith("gemini-")) return "antigravity-gemini";
+  return null;
+}
+
+function quotaFor(model) {
+  const bucket = quotaBucket(model);
+  const value = bucket ? quotaCache.buckets[bucket] : undefined;
+  return typeof value === "number" ? value : null;
+}
+
+async function refreshQuotaCache() {
+  const buckets = {};
+  const keep = (bucket, value) => {
+    if (typeof value !== "number") return;
+    buckets[bucket] = Math.max(buckets[bucket] ?? -1, value);
+  };
+  const tightest = (windows) => {
+    const values = windows.map((item) => item.remainingPercent).filter((value) => typeof value === "number");
+    return values.length ? Math.min(...values) : undefined;
+  };
+  for (const account of listAccounts().filter((item) => !item.disabled && ["codex", "claude", "antigravity"].includes(item.provider))) {
+    try {
+      const windows = await fetchUsage(account.id);
+      if (account.provider !== "antigravity") {
+        keep(account.provider, tightest(windows));
+        continue;
+      }
+      // Antigravity groups: "Gemini Models" vs "Claude and GPT models".
+      keep("antigravity-claude", tightest(windows.filter((item) => /claude|gpt/i.test(item.title))));
+      keep("antigravity-gemini", tightest(windows.filter((item) => !/claude|gpt/i.test(item.title))));
+    } catch (error) {
+      log(`Balanced routing: could not read ${account.providerLabel} quota (${error.message})`);
+    }
+  }
+  quotaCache = { buckets, updatedAt: new Date().toISOString() };
+  log(`Balanced routing quotas: ${Object.entries(buckets).map(([key, value]) => `${key} ${Math.round(value)}%`).join(", ") || "none available"}`);
+  return quotaCache;
 }
 
 function fetchUsage(accountId) {
@@ -1100,6 +1167,8 @@ if (!hasInstanceLock) {
     createWindow();
     // Factory can't reach the custom models until the proxy is up, so start it right away.
     startProxy().catch((error) => log(`Auto-start failed: ${error.message}`));
+    refreshQuotaCache().catch(() => {});
+    setInterval(() => refreshQuotaCache().catch(() => {}), QUOTA_REFRESH_MS);
   });
 }
 
@@ -1138,7 +1207,18 @@ function routingState() {
     roles: ROLES.map((key) => ({ key, label: ROLE_LABELS[key] })),
     roleModels: settings.roleModels,
     fallbackChains: settings.fallbackChains,
-    defaults: { categoryModels: DEFAULT_CATEGORY_MODELS, roleModels: DEFAULT_ROLE_MODELS, fallbackChains: DEFAULT_CHAINS },
+    defaults: {
+      categoryModels: DEFAULT_CATEGORY_MODELS,
+      roleModels: DEFAULT_ROLE_MODELS,
+      fallbackChains: DEFAULT_CHAINS,
+      overflowModels: DEFAULT_OVERFLOW_MODELS,
+      missionOverflowModels: DEFAULT_MISSION_OVERFLOW_MODELS
+    },
+    balanced: settings.balanced,
+    overflowThreshold: settings.overflowThreshold,
+    overflowModels: settings.overflowModels,
+    missionOverflowModels: settings.missionOverflowModels,
+    quotas: quotaCache,
     models: modelOptions(),
     cooling
   };
@@ -1231,7 +1311,11 @@ ipcMain.handle("routing:save", (_event, next) => {
     fallbackEnabled: next.fallbackEnabled,
     categoryModels: next.categoryModels,
     roleModels: next.roleModels,
-    fallbackChains: next.fallbackChains
+    fallbackChains: next.fallbackChains,
+    balanced: next.balanced,
+    overflowThreshold: next.overflowThreshold,
+    overflowModels: next.overflowModels,
+    missionOverflowModels: next.missionOverflowModels
   });
   return routingState();
 });

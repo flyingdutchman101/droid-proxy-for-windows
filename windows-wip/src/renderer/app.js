@@ -125,10 +125,32 @@ function renderRouting(state) {
       </div>`;
   }).join("");
 
+  document.querySelector("#balanced-enabled").checked = state.balanced;
+  document.querySelector("#overflow-threshold").value = state.overflowThreshold;
+  const overflowSelects = (prefix, list, count) => Array.from({ length: count }, (_, slot) => modelSelect(`${prefix}-${slot}`, list[slot] || "", true)).join("");
+  document.querySelector("#overflow-selects").innerHTML = overflowSelects("overflow", state.overflowModels, 3);
+  document.querySelector("#mission-overflow-selects").innerHTML = overflowSelects("mission-overflow", state.missionOverflowModels, 3);
+
   renderCooling(state);
 }
 
+const QUOTA_LABELS = {
+  codex: "Codex",
+  claude: "Claude",
+  "antigravity-gemini": "Google · Gemini",
+  "antigravity-claude": "Google · Claude"
+};
+
+function renderQuotas(state) {
+  const entries = Object.entries(state.quotas?.buckets || {});
+  document.querySelector("#quota-snapshot").innerHTML = entries.length
+    ? entries.map(([bucket, left]) => `<span class="quota-pill ${left < state.overflowThreshold ? "low" : ""}">${escapeHtml(QUOTA_LABELS[bucket] || bucket)} ${Math.round(left)}% left</span>`).join("")
+      + (state.quotas.updatedAt ? `<span class="usage-note">updated ${new Date(state.quotas.updatedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>` : "")
+    : `<span class="usage-note">Reading subscription quotas…</span>`;
+}
+
 function renderCooling(state) {
+  renderQuotas(state);
   const cooling = document.querySelector("#cooling-list");
   cooling.innerHTML = state.cooling.length
     ? state.cooling.map((item) => `<div class="cooling">${escapeHtml(labelFor(item.model))}: out of quota, skipped until ${new Date(item.until).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</div>`).join("")
@@ -149,12 +171,17 @@ function collectRouting() {
     roleModels[row.dataset.category] = roleModels[row.dataset.category] || {};
     roleModels[row.dataset.category][row.dataset.role] = { model, backup, backup2 };
   });
+  const pickList = (container) => [...new Set([...document.querySelectorAll(`${container} select`)].map((select) => select.value).filter(Boolean))];
   return {
     autoEnabled: document.querySelector("#auto-enabled").checked,
     fallbackEnabled: document.querySelector("#fallback-enabled").checked,
     categoryModels,
     roleModels,
-    fallbackChains
+    fallbackChains,
+    balanced: document.querySelector("#balanced-enabled").checked,
+    overflowThreshold: Number(document.querySelector("#overflow-threshold").value),
+    overflowModels: pickList("#overflow-selects"),
+    missionOverflowModels: pickList("#mission-overflow-selects")
   };
 }
 
@@ -392,6 +419,8 @@ async function saveRouting(message) {
 }
 
 document.querySelector("#save-routing-btn").addEventListener("click", () => saveRouting("Routing saved."));
+document.querySelector("#save-balanced-btn").addEventListener("click", () => saveRouting("Balanced routing saved. New sessions use it."));
+document.querySelector("#balanced-enabled").addEventListener("change", () => saveRouting("Balanced routing updated."));
 document.querySelector("#auto-enabled").addEventListener("change", () =>
   saveRouting("Auto routing updated. Click Apply so Factory shows or hides DroidProxy: Auto."));
 document.querySelector("#fallback-enabled").addEventListener("change", () => saveRouting("Backup models updated."));
@@ -446,6 +475,12 @@ document.querySelector("#api-provider-list").addEventListener("click", async (ev
     showToast(cleanIpcError(error));
   }
 });
+
+// Quota pills and cool-downs change on their own; refresh them without
+// touching the editable routing fields.
+setInterval(() => {
+  if (routing) api.routing().then(renderCooling).catch(() => {});
+}, 60 * 1000);
 
 // Only the cool-down list is refreshed here, so unsaved routing edits survive.
 api.onProxyState((state) => {

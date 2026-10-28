@@ -106,6 +106,31 @@
 
       <section class="section-card">
         <div class="card-title">
+          <span>Balanced routing</span>
+          <label class="check-row"><input id="balanced-enabled" type="checkbox" /> Enabled</label>
+        </div>
+        <p class="card-note">Each new Auto session uses whichever model in its pool (the task type's model plus its backups) has the most subscription quota left, so heavy coding drains every plan evenly. When every subscription in the pool is below the threshold, the session goes to your pay-per-token overflow models.</p>
+        <div id="quota-snapshot" class="quota-snapshot"></div>
+        <div class="routing-row">
+          <span class="routing-label">Overflow below</span>
+          <div class="threshold-input"><input id="overflow-threshold" type="number" min="0" max="100" step="5" /> <span>% left</span></div>
+        </div>
+        <div class="routing-row">
+          <span class="routing-label">Sessions overflow</span>
+          <div id="overflow-selects" class="chain-selects"></div>
+        </div>
+        <div class="routing-row">
+          <span class="routing-label">Missions overflow</span>
+          <div id="mission-overflow-selects" class="chain-selects"></div>
+        </div>
+        <p class="card-note">Qwen Token Plan terms forbid automation and batch use, so Missions overflow to DeepSeek only by default.</p>
+        <div class="card-actions">
+          <button id="save-balanced-btn" class="primary small">Save</button>
+        </div>
+      </section>
+
+      <section class="section-card">
+        <div class="card-title">
           <span>Factory modes</span>
         </div>
         <p class="card-note">Which model Factory uses for normal sessions, spec mode, and each Mission role. Applying writes Factory's settings (a backup is saved first). "Factory default" lets Factory inherit the session model.</p>

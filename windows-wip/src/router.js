@@ -107,6 +107,15 @@ const DEFAULT_CHAINS = {
 
 const DEFAULT_CLASSIFIER_MODELS = ["claude-haiku-5-5", "gemini-3.8-flash-high", "gpt-6-luna"];
 
+// Balanced routing. Models with unknown quota (Kimi, API keys) score as if
+// half full; the usual pick only loses once another plan has clearly more left.
+const UNKNOWN_QUOTA = 50;
+const PRIMARY_EDGE = 10;
+const DEFAULT_OVERFLOW_THRESHOLD = 35;
+// Qwen's Token Plan terms forbid automation, so Missions only overflow to DeepSeek.
+const DEFAULT_OVERFLOW_MODELS = ["qwen/qwen3.8-max", "qwen/glm-5.3", "deepseek/deepseek-v4-pro"];
+const DEFAULT_MISSION_OVERFLOW_MODELS = ["deepseek/deepseek-v4-pro"];
+
 function textOf(content) {
   if (typeof content === "string") return content;
   if (!Array.isArray(content)) return "";
@@ -236,18 +245,41 @@ function createRouter({ targetHost, targetPort, log, getConfig, onFallback }) {
 
     const config = getConfig();
     const category = await classify(taskText(body));
-    let choice;
+    let pool;
     if (roleName) {
       const cell = config.roleModels?.[category]?.[roleName] || DEFAULT_ROLE_MODELS[category][roleName];
-      choice = { category, role: roleName, model: cell.model, backups: [cell.backup, cell.backup2].filter(Boolean) };
+      pool = [cell.model, cell.backup, cell.backup2];
     } else {
       const model = config.categoryModels[category] || DEFAULT_CATEGORY_MODELS[category] || DEFAULT_CATEGORY_MODELS.coding;
-      choice = { category, role: null, model, backups: [] };
+      pool = [model, ...(config.fallbackChains[model] || []).slice(0, 3)];
     }
+    pool = pool.filter((item, index, all) => item && all.indexOf(item) === index);
+
+    const pick = config.balanced ? pickBalanced(pool, roleName ? config.missionOverflowModels : config.overflowModels, config) : { model: pool[0], reason: "" };
+    // The rest of the pool stays as ordered backups behind the chosen model.
+    const choice = { category, role: roleName, model: pick.model, backups: pool.filter((item) => item !== pick.model) };
     sessions.set(key, choice);
     if (sessions.size > 1000) sessions.delete(sessions.keys().next().value);
-    log(`Auto${roleName ? ` ${roleName}` : ""}: new session classified as ${category}; using ${choice.model}`);
+    log(`Auto${roleName ? ` ${roleName}` : ""}: new session classified as ${category}; using ${choice.model}${pick.reason ? ` (${pick.reason})` : ""}`);
     return choice;
+  }
+
+  // Balanced: within a pool of comparable models, use the one whose
+  // subscription has the most quota left, so coding-heavy days drain every plan
+  // evenly instead of one. The usual pick keeps a small edge. When every
+  // subscription in the pool is low, pay-per-token overflow models take over.
+  function pickBalanced(pool, overflow, config) {
+    const scored = pool.map((model, index) => {
+      const left = isCooling(model) ? 0 : config.quotaFor(model);
+      return { model, left, score: (left ?? UNKNOWN_QUOTA) + (index === 0 ? PRIMARY_EDGE : 0) };
+    });
+    const best = scored.reduce((top, item) => (item.score > top.score ? item : top), scored[0]);
+    const summary = scored.map((item) => `${item.model} ${item.left === null ? "?" : `${Math.round(item.left)}%`}`).join(", ");
+    const known = scored.filter((item) => item.left !== null);
+    const allLow = known.length > 0 && known.every((item) => item.left < config.overflowThreshold);
+    const spare = (overflow || []).find((model) => config.isAvailable(model) && !isCooling(model));
+    if (allLow && spare) return { model: spare, reason: `subscriptions low: ${summary}; overflow` };
+    return { model: best.model, reason: `balanced: ${summary}` };
   }
 
   function reportFallback(from, to, until) {
@@ -259,6 +291,9 @@ function createRouter({ targetHost, targetPort, log, getConfig, onFallback }) {
 }
 
 module.exports = {
+  DEFAULT_OVERFLOW_THRESHOLD,
+  DEFAULT_OVERFLOW_MODELS,
+  DEFAULT_MISSION_OVERFLOW_MODELS,
   AUTO_MODEL_ID,
   AUTO_ROLE_IDS,
   ROLES,

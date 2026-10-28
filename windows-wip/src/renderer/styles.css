@@ -748,3 +748,40 @@ label {
 .usage-note a {
   color: var(--accent-strong);
 }
+
+.quota-snapshot {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.quota-pill {
+  border-radius: 999px;
+  padding: 2px 9px;
+  font-size: 11px;
+  color: var(--success);
+  background: rgba(74, 222, 128, 0.1);
+  border: 1px solid rgba(74, 222, 128, 0.3);
+}
+
+.quota-pill.low {
+  color: var(--warning);
+  background: rgba(251, 191, 36, 0.1);
+  border-color: rgba(251, 191, 36, 0.35);
+}
+
+.threshold-input {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.threshold-input input {
+  width: 72px;
+  min-height: 28px;
+  padding: 4px 6px;
+}
