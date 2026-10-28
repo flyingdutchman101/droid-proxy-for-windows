@@ -17,6 +17,7 @@ const {
   DEFAULT_OVERFLOW_THRESHOLD,
   DEFAULT_OVERFLOW_MODELS,
   DEFAULT_MISSION_OVERFLOW_MODELS,
+  DEFAULT_PREMIUM,
   createRouter
 } = require("./router");
 const { API_PROVIDERS, apiModelId, providerRegion, providerModels, regionForKey, apiKeysYaml } = require("./providers");
@@ -55,6 +56,8 @@ const DEFAULT_SETTINGS = {
   overflowThreshold: DEFAULT_OVERFLOW_THRESHOLD,
   overflowModels: DEFAULT_OVERFLOW_MODELS,
   missionOverflowModels: DEFAULT_MISSION_OVERFLOW_MODELS,
+  // Fable for chosen task types while Claude has plenty of quota.
+  premium: DEFAULT_PREMIUM,
   fallbackEnabled: true,
   fallbackChains: DEFAULT_CHAINS,
   // { [providerKey]: { region, keyEnc } }; keys are encrypted with Windows DPAPI.
@@ -261,6 +264,12 @@ function sanitizeSettings(value) {
     overflowThreshold: Number.isFinite(Number(value.overflowThreshold)) ? Math.min(100, Math.max(0, Number(value.overflowThreshold))) : DEFAULT_OVERFLOW_THRESHOLD,
     overflowModels: stringList(value.overflowModels, DEFAULT_OVERFLOW_MODELS).slice(0, 4),
     missionOverflowModels: stringList(value.missionOverflowModels, DEFAULT_MISSION_OVERFLOW_MODELS).slice(0, 4),
+    premium: {
+      enabled: value.premium?.enabled !== false,
+      model: typeof value.premium?.model === "string" && value.premium.model ? value.premium.model : DEFAULT_PREMIUM.model,
+      threshold: Number.isFinite(Number(value.premium?.threshold)) ? Math.min(100, Math.max(0, Number(value.premium.threshold))) : DEFAULT_PREMIUM.threshold,
+      categories: stringList(value.premium?.categories, DEFAULT_PREMIUM.categories).filter((category) => CATEGORIES[category])
+    },
     fallbackEnabled: value.fallbackEnabled !== false,
     fallbackChains: Object.fromEntries(Object.entries(value.fallbackChains || DEFAULT_CHAINS)
       .filter(([model]) => typeof model === "string" && model)
@@ -497,6 +506,7 @@ function getRouter() {
       overflowThreshold: settings.overflowThreshold,
       overflowModels: settings.overflowModels,
       missionOverflowModels: settings.missionOverflowModels,
+      premium: settings.premium,
       quotaFor,
       isAvailable: (model) => modelOptions().some((item) => item.id === model)
     }),
@@ -1221,6 +1231,7 @@ function routingState() {
     overflowThreshold: settings.overflowThreshold,
     overflowModels: settings.overflowModels,
     missionOverflowModels: settings.missionOverflowModels,
+    premium: settings.premium,
     quotas: quotaCache,
     models: modelOptions(),
     cooling
@@ -1318,7 +1329,8 @@ ipcMain.handle("routing:save", (_event, next) => {
     balanced: next.balanced,
     overflowThreshold: next.overflowThreshold,
     overflowModels: next.overflowModels,
-    missionOverflowModels: next.missionOverflowModels
+    missionOverflowModels: next.missionOverflowModels,
+    premium: next.premium
   });
   return routingState();
 });

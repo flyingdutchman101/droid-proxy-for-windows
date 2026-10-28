@@ -116,6 +116,12 @@ const DEFAULT_OVERFLOW_THRESHOLD = 35;
 const DEFAULT_OVERFLOW_MODELS = ["qwen/qwen3.8-max", "qwen/glm-5.3", "deepseek/deepseek-v4-pro"];
 const DEFAULT_MISSION_OVERFLOW_MODELS = ["deepseek/deepseek-v4-pro"];
 
+// Premium pick: Fable 5.1 leads LegalBench (88.5%) and EMB financial
+// modelling (76.7%) and is #2 on Arena Math, but costs 2.5x Opus on the same
+// Claude quota. So normal Auto sessions in those categories use it only while
+// Claude has plenty of quota left.
+const DEFAULT_PREMIUM = { enabled: true, model: "claude-fable-5-1", threshold: 60, categories: ["legal", "business", "math"] };
+
 function textOf(content) {
   if (typeof content === "string") return content;
   if (!Array.isArray(content)) return "";
@@ -253,9 +259,21 @@ function createRouter({ targetHost, targetPort, log, getConfig, onFallback }) {
       const model = config.categoryModels[category] || DEFAULT_CATEGORY_MODELS[category] || DEFAULT_CATEGORY_MODELS.coding;
       pool = [model, ...(config.fallbackChains[model] || []).slice(0, 3)];
     }
+    const premium = config.premium || DEFAULT_PREMIUM;
+    const premiumApplies = config.balanced && !roleName && premium.enabled && premium.categories.includes(category) && config.isAvailable(premium.model);
+    // The premium model also joins the pool as a backup.
+    if (premiumApplies) pool.push(premium.model);
     pool = pool.filter((item, index, all) => item && all.indexOf(item) === index);
 
-    const pick = config.balanced ? pickBalanced(pool, roleName ? config.missionOverflowModels : config.overflowModels, config) : { model: pool[0], reason: "" };
+    let pick;
+    const premiumLeft = premiumApplies && !isCooling(premium.model) ? config.quotaFor(premium.model) : null;
+    if (premiumLeft !== null && premiumLeft >= premium.threshold) {
+      pick = { model: premium.model, reason: `premium: ${premium.model} quota ${Math.round(premiumLeft)}% ≥ ${premium.threshold}%` };
+    } else if (config.balanced) {
+      pick = pickBalanced(pool, roleName ? config.missionOverflowModels : config.overflowModels, config);
+    } else {
+      pick = { model: pool[0], reason: "" };
+    }
     // The rest of the pool stays as ordered backups behind the chosen model.
     const choice = { category, role: roleName, model: pick.model, backups: pool.filter((item) => item !== pick.model) };
     sessions.set(key, choice);
@@ -291,6 +309,7 @@ function createRouter({ targetHost, targetPort, log, getConfig, onFallback }) {
 }
 
 module.exports = {
+  DEFAULT_PREMIUM,
   DEFAULT_OVERFLOW_THRESHOLD,
   DEFAULT_OVERFLOW_MODELS,
   DEFAULT_MISSION_OVERFLOW_MODELS,

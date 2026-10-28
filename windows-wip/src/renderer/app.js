@@ -131,6 +131,13 @@ function renderRouting(state) {
   document.querySelector("#overflow-selects").innerHTML = overflowSelects("overflow", state.overflowModels, 3);
   document.querySelector("#mission-overflow-selects").innerHTML = overflowSelects("mission-overflow", state.missionOverflowModels, 3);
 
+  const premium = state.premium || {};
+  document.querySelector("#premium-enabled").checked = premium.enabled !== false;
+  document.querySelector("#premium-model-select").innerHTML = modelSelect("premium-model", premium.model, false);
+  document.querySelector("#premium-threshold").value = premium.threshold ?? 60;
+  document.querySelector("#premium-categories").innerHTML = state.categories.map((category) => `
+    <label class="check-row"><input type="checkbox" value="${escapeHtml(category.key)}" ${(premium.categories || []).includes(category.key) ? "checked" : ""} /> ${escapeHtml(category.key[0].toUpperCase() + category.key.slice(1))}</label>`).join("");
+
   renderCooling(state);
 }
 
@@ -181,7 +188,13 @@ function collectRouting() {
     balanced: document.querySelector("#balanced-enabled").checked,
     overflowThreshold: Number(document.querySelector("#overflow-threshold").value),
     overflowModels: pickList("#overflow-selects"),
-    missionOverflowModels: pickList("#mission-overflow-selects")
+    missionOverflowModels: pickList("#mission-overflow-selects"),
+    premium: {
+      enabled: document.querySelector("#premium-enabled").checked,
+      model: document.querySelector("#premium-model").value,
+      threshold: Number(document.querySelector("#premium-threshold").value),
+      categories: [...document.querySelectorAll("#premium-categories input:checked")].map((input) => input.value)
+    }
   };
 }
 

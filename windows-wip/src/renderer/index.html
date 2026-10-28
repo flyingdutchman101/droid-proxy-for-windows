@@ -111,6 +111,21 @@
         </div>
         <p class="card-note">Each new Auto session uses whichever model in its pool (the task type's model plus its backups) has the most subscription quota left, so heavy coding drains every plan evenly. When every subscription in the pool is below the threshold, the session goes to your pay-per-token overflow models.</p>
         <div id="quota-snapshot" class="quota-snapshot"></div>
+        <div class="premium-block">
+          <label class="check-row"><input id="premium-enabled" type="checkbox" /> Premium model while its quota is plentiful</label>
+          <div class="routing-row">
+            <span class="routing-label">Premium model</span>
+            <div id="premium-model-select"></div>
+          </div>
+          <div class="routing-row">
+            <span class="routing-label">When quota ≥</span>
+            <div class="threshold-input"><input id="premium-threshold" type="number" min="0" max="100" step="5" /> <span>% left</span></div>
+          </div>
+          <div class="routing-row">
+            <span class="routing-label">For task types</span>
+            <div id="premium-categories" class="category-checks"></div>
+          </div>
+        </div>
         <div class="routing-row">
           <span class="routing-label">Overflow below</span>
           <div class="threshold-input"><input id="overflow-threshold" type="number" min="0" max="100" step="5" /> <span>% left</span></div>

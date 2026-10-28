@@ -785,3 +785,17 @@ label {
   min-height: 28px;
   padding: 4px 6px;
 }
+
+.premium-block {
+  display: grid;
+  gap: 6px;
+  padding: 8px 0 10px;
+  margin-bottom: 8px;
+  border-bottom: 1px solid var(--panel-border);
+}
+
+.category-checks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+}
