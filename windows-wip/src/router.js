@@ -44,45 +44,47 @@ const DEFAULT_CATEGORY_MODELS = {
 
 // Orchestrator: strongest planner for the task type. Worker: capable but faster
 // and cheaper, since it does most of the tokens. Validator: a different model
-// family from the worker, so reviews are independent. Each role has its own
-// backup. Sources: Vals AI (Terminal-Bench 4.0, Vibe Code, Legal Index,
-// LegalBench, Finance Agent, EMB, Science Index, ProofBench), Arena, Oct 2026.
-const role = (model, backup) => ({ model, backup });
+// family from the worker, so reviews are independent. Each role has two
+// backups; the second is on a different subscription where possible, so one
+// exhausted plan cannot take out all three. Sources: Vals AI (Terminal-Bench
+// 4.0, Vibe Code, Legal Index, LegalBench, Finance Agent, EMB, Science Index,
+// ProofBench), Arena, Oct 2026.
+const role = (model, backup, backup2) => ({ model, backup, backup2 });
 const DEFAULT_ROLE_MODELS = {
   coding: {
-    orchestrator: role("claude-opus-5-5", "gpt-6-astra"),
-    worker: role("gpt-6.1-sol", "claude-sonnet-5-5"),
-    validator: role("claude-sonnet-5-5", "gemini-4-argon-high")
+    orchestrator: role("claude-opus-5-5", "gpt-6-astra", "gemini-4-argon-high"),
+    worker: role("gpt-6.1-sol", "claude-sonnet-5-5", "ag-c55s-high"),
+    validator: role("claude-sonnet-5-5", "gemini-4-argon-high", "gpt-6-astra")
   },
   legal: {
-    orchestrator: role("gemini-4-argon-high", "claude-opus-5-5"),
-    worker: role("gemini-3.8-flash-high", "claude-haiku-5-5"),
-    validator: role("claude-fable-5-1", "claude-opus-5-5")
+    orchestrator: role("gemini-4-argon-high", "claude-opus-5-5", "ag-c55o-high"),
+    worker: role("gemini-3.8-flash-high", "claude-haiku-5-5", "gpt-6.1-terra"),
+    validator: role("claude-fable-5-1", "claude-opus-5-5", "gemini-4-argon-high")
   },
   business: {
-    orchestrator: role("claude-opus-5-5", "gemini-4-argon-high"),
-    worker: role("gemini-3.8-flash-high", "gpt-6.1-terra"),
-    validator: role("claude-fable-5-1", "ag-c55o-high")
+    orchestrator: role("claude-opus-5-5", "gemini-4-argon-high", "gpt-6-astra"),
+    worker: role("gemini-3.8-flash-high", "gpt-6.1-terra", "claude-haiku-5-5"),
+    validator: role("claude-fable-5-1", "ag-c55o-high", "gemini-4-argon-high")
   },
   writing: {
-    orchestrator: role("gemini-4-argon-high", "claude-opus-5-5"),
-    worker: role("gemini-3.8-flash-high", "claude-sonnet-5-5"),
-    validator: role("claude-opus-5-5", "ag-c55o-high")
+    orchestrator: role("gemini-4-argon-high", "claude-opus-5-5", "ag-c55o-high"),
+    worker: role("gemini-3.8-flash-high", "claude-sonnet-5-5", "claude-haiku-5-5"),
+    validator: role("claude-opus-5-5", "ag-c55o-high", "claude-fable-5-1")
   },
   research: {
-    orchestrator: role("gpt-6-astra", "claude-opus-5-5"),
-    worker: role("gpt-6.1-sol", "claude-sonnet-5-5"),
-    validator: role("claude-opus-5-5", "gemini-4-argon-high")
+    orchestrator: role("gpt-6-astra", "claude-opus-5-5", "gemini-4-argon-high"),
+    worker: role("gpt-6.1-sol", "claude-sonnet-5-5", "gemini-4-argon-high"),
+    validator: role("claude-opus-5-5", "gemini-4-argon-high", "ag-c55o-high")
   },
   math: {
-    orchestrator: role("gemini-4-argon-high", "claude-fable-5-1"),
-    worker: role("claude-sonnet-5-5", "gpt-6.1-sol"),
-    validator: role("gpt-6.1-sol", "gpt-6-astra")
+    orchestrator: role("gemini-4-argon-high", "claude-fable-5-1", "gpt-6-astra"),
+    worker: role("claude-sonnet-5-5", "gpt-6.1-sol", "ag-c55s-high"),
+    validator: role("gpt-6.1-sol", "gpt-6-astra", "claude-opus-5-5")
   },
   quick: {
-    orchestrator: role("claude-haiku-5-5", "gemini-3.8-flash-high"),
-    worker: role("claude-haiku-5-5", "gpt-6-luna"),
-    validator: role("gemini-3.8-flash-high", "gpt-6-luna")
+    orchestrator: role("claude-haiku-5-5", "gemini-3.8-flash-high", "gpt-6-luna"),
+    worker: role("claude-haiku-5-5", "gpt-6-luna", "gemini-3.8-flash-high"),
+    validator: role("gemini-3.8-flash-high", "gpt-6-luna", "claude-haiku-5-5")
   }
 };
 
@@ -237,7 +239,7 @@ function createRouter({ targetHost, targetPort, log, getConfig, onFallback }) {
     let choice;
     if (roleName) {
       const cell = config.roleModels?.[category]?.[roleName] || DEFAULT_ROLE_MODELS[category][roleName];
-      choice = { category, role: roleName, model: cell.model, backups: cell.backup ? [cell.backup] : [] };
+      choice = { category, role: roleName, model: cell.model, backups: [cell.backup, cell.backup2].filter(Boolean) };
     } else {
       const model = config.categoryModels[category] || DEFAULT_CATEGORY_MODELS[category] || DEFAULT_CATEGORY_MODELS.coding;
       choice = { category, role: null, model, backups: [] };

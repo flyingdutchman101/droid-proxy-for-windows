@@ -100,6 +100,7 @@ function renderRouting(state) {
           <div class="role-selects">
             ${modelSelect(`role-${category.key}-${roleItem.key}-model`, cell.model, false)}
             ${modelSelect(`role-${category.key}-${roleItem.key}-backup`, cell.backup || "", true)}
+            ${modelSelect(`role-${category.key}-${roleItem.key}-backup2`, cell.backup2 || "", true)}
           </div>
         </div>`;
     }).join("");
@@ -109,7 +110,7 @@ function renderRouting(state) {
           <span class="routing-label category-name">${escapeHtml(category.key[0].toUpperCase() + category.key.slice(1))}</span>
           ${modelSelect(`cat-${category.key}`, state.categoryModels[category.key], false)}
         </div>
-        <div class="role-head"><span></span><span>Model</span><span>Backup</span></div>
+        <div class="role-head"><span></span><span>Model</span><span>Backup</span><span>Backup 2</span></div>
         ${roles}
       </div>`;
   }).join("");
@@ -144,9 +145,9 @@ function collectRouting() {
   });
   const roleModels = {};
   document.querySelectorAll(".role-row").forEach((row) => {
-    const [model, backup] = [...row.querySelectorAll("select")].map((select) => select.value);
+    const [model, backup, backup2] = [...row.querySelectorAll("select")].map((select) => select.value);
     roleModels[row.dataset.category] = roleModels[row.dataset.category] || {};
-    roleModels[row.dataset.category][row.dataset.role] = { model, backup: backup === model ? "" : backup };
+    roleModels[row.dataset.category][row.dataset.role] = { model, backup, backup2 };
   });
   return {
     autoEnabled: document.querySelector("#auto-enabled").checked,

@@ -1,8 +1,9 @@
-const { app, BrowserWindow, ipcMain, shell, Tray, Menu, safeStorage } = require("electron");
+const { app, BrowserWindow, ipcMain, shell, Tray, Menu, safeStorage, screen } = require("electron");
 const path = require("path");
 const fs = require("fs");
 const os = require("os");
 const { spawn, execFile } = require("child_process");
+const crypto = require("crypto");
 const { createFrontProxy } = require("./proxy");
 const {
   AUTO_MODEL_ID,
@@ -243,7 +244,9 @@ function sanitizeSettings(value) {
       const chosen = value.roleModels?.[category]?.[roleName] || {};
       const model = typeof chosen.model === "string" && chosen.model ? chosen.model : fallback.model;
       const backup = typeof chosen.backup === "string" ? chosen.backup : fallback.backup;
-      return [roleName, { model, backup: backup === model ? "" : backup }];
+      const backup2 = typeof chosen.backup2 === "string" ? chosen.backup2 : fallback.backup2;
+      const cleanBackup = backup === model ? "" : backup;
+      return [roleName, { model, backup: cleanBackup, backup2: backup2 === model || backup2 === cleanBackup ? "" : backup2 }];
     }))])),
     classifierModels: stringList(value.classifierModels, DEFAULT_CLASSIFIER_MODELS),
     fallbackEnabled: value.fallbackEnabled !== false,
@@ -985,13 +988,15 @@ function applyFactoryModels() {
 }
 
 function createWindow() {
+  // Wide enough for the multi-column layout, but never larger than the screen.
+  const area = screen.getPrimaryDisplay().workAreaSize;
   mainWindow = new BrowserWindow({
-    width: 520,
-    height: 820,
+    width: Math.min(1120, area.width - 80),
+    height: Math.min(880, area.height - 60),
     minWidth: 420,
     minHeight: 640,
     title: APP_NAME,
-    icon: getResourcePath("icon.png"),
+    icon: taskbarIconPath(),
     backgroundColor: "#0b0e11",
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
@@ -1008,7 +1013,7 @@ function createWindow() {
       appId: APP_USER_MODEL_ID,
       relaunchCommand: `"${portableExe}"`,
       relaunchDisplayName: APP_NAME,
-      appIconPath: portableExe,
+      appIconPath: taskbarIconPath(),
       appIconIndex: 0
     });
   }
@@ -1037,8 +1042,22 @@ function showWindow() {
   mainWindow.focus();
 }
 
+// Windows caches taskbar and pin icons by file path, so an icon update behind
+// the same path keeps showing the old artwork. Name the file after its content.
+function taskbarIconPath() {
+  const source = getResourcePath("icon.ico");
+  try {
+    const hash = crypto.createHash("sha256").update(fs.readFileSync(source)).digest("hex").slice(0, 12);
+    const target = path.join(app.getPath("userData"), `icon-${hash}.ico`);
+    if (!fs.existsSync(target)) fs.copyFileSync(source, target);
+    return target;
+  } catch {
+    return source;
+  }
+}
+
 function createTray() {
-  tray = new Tray(getResourcePath("icon.ico"));
+  tray = new Tray(taskbarIconPath());
   tray.setToolTip(APP_NAME);
   tray.on("click", showWindow);
   updateTrayMenu();

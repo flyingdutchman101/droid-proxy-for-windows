@@ -28,7 +28,28 @@ async function renderPng(size) {
   return sized.toPNG();
 }
 
-// ICO with PNG payloads (supported since Windows Vista).
+// 32-bit BGRA DIB entry for small icon sizes. Many Windows components only
+// decode PNG payloads for the 256px entry, so smaller sizes use classic DIBs.
+function dibEntry(image, size) {
+  const bgra = image.toBitmap(); // BGRA, top-down
+  const header = Buffer.alloc(40);
+  const maskRow = Math.ceil(size / 32) * 4;
+  header.writeUInt32LE(40, 0);
+  header.writeInt32LE(size, 4);
+  header.writeInt32LE(size * 2, 8); // XOR bitmap + AND mask
+  header.writeUInt16LE(1, 12);
+  header.writeUInt16LE(32, 14);
+  header.writeUInt32LE(0, 16);
+  header.writeUInt32LE(size * size * 4 + maskRow * size, 20);
+  const pixels = Buffer.alloc(size * size * 4);
+  for (let y = 0; y < size; y += 1) {
+    bgra.copy(pixels, (size - 1 - y) * size * 4, y * size * 4, (y + 1) * size * 4);
+  }
+  const mask = Buffer.alloc(maskRow * size); // all zero: alpha channel decides transparency
+  return Buffer.concat([header, pixels, mask]);
+}
+
+// ICO: PNG for 256px (supported since Vista), DIBs below that.
 function buildIco(pngs) {
   const header = Buffer.alloc(6);
   header.writeUInt16LE(0, 0);
@@ -58,7 +79,10 @@ app.whenReady().then(async () => {
   const big = await renderPng(512);
   fs.writeFileSync(path.join(resources, "icon.png"), big);
   const source = nativeImage.createFromBuffer(big);
-  const pngs = ICO_SIZES.map((size) => ({ size, data: source.resize({ width: size, height: size, quality: "best" }).toPNG() }));
+  const pngs = ICO_SIZES.map((size) => {
+    const image = source.resize({ width: size, height: size, quality: "best" });
+    return { size, data: size >= 256 ? image.toPNG() : dibEntry(image, size) };
+  });
   fs.writeFileSync(path.join(resources, "icon.ico"), buildIco(pngs));
   console.log(`icon.png (512) and icon.ico (${ICO_SIZES.join(", ")}) written`);
   app.quit();
