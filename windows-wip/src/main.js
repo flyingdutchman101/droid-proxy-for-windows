@@ -30,7 +30,8 @@ const DEFAULT_SETTINGS = {
 const PROVIDERS = {
   codex: { label: "Codex", loginFlag: "-codex-login" },
   claude: { label: "Claude", loginFlag: "-claude-login" },
-  antigravity: { label: "Gemini", loginFlag: "-antigravity-login" }
+  antigravity: { label: "Gemini", loginFlag: "-antigravity-login" },
+  kimi: { label: "Kimi", loginFlag: "-kimi-login" }
 };
 
 const ALL_EFFORTS = ["low", "medium", "high", "xhigh", "max"];
@@ -39,8 +40,12 @@ function claudeModel(model, displayName, extra = {}) {
   return { model, displayName, providerKey: "claude", provider: "anthropic", maxOutputTokens: 128000, supportedReasoningEfforts: ALL_EFFORTS, defaultReasoningEffort: "xhigh", ...extra };
 }
 
-function geminiModel(model, displayName, efforts = ["high"]) {
-  return { model, displayName, providerKey: "antigravity", provider: "openai", maxOutputTokens: 65536, supportedReasoningEfforts: efforts, defaultReasoningEffort: efforts[0] };
+function geminiModel(model, displayName, efforts = ["high"], extra = {}) {
+  return { model, displayName, providerKey: "antigravity", provider: "openai", maxOutputTokens: 65536, supportedReasoningEfforts: efforts, defaultReasoningEffort: efforts[0], ...extra };
+}
+
+function kimiModel(model, displayName, maxOutputTokens, effort) {
+  return { model, displayName, providerKey: "kimi", provider: "openai", maxOutputTokens, supportedReasoningEfforts: [effort], defaultReasoningEffort: effort };
 }
 
 const FACTORY_MODELS = [
@@ -63,6 +68,15 @@ const FACTORY_MODELS = [
     defaultReasoningEffort: "medium"
   },
   {
+    model: "gpt-6.1-terra",
+    displayName: "DroidProxy: GPT 6.1 Terra",
+    providerKey: "codex",
+    provider: "openai",
+    maxContextLimit: 272000,
+    supportedReasoningEfforts: ALL_EFFORTS,
+    defaultReasoningEffort: "medium"
+  },
+  {
     model: "gpt-6-luna",
     displayName: "DroidProxy: GPT 6 Luna",
     providerKey: "codex",
@@ -77,7 +91,14 @@ const FACTORY_MODELS = [
   claudeModel("claude-haiku-5-5", "DroidProxy: Haiku 5.5", { maxContextLimit: 1000000 }),
   geminiModel("gemini-3.8-flash-high", "DroidProxy: Gemini 3.8 Flash (High)"),
   // Antigravity only serves this to paid (non-trial) Google AI Pro/Ultra accounts.
-  geminiModel("gemini-4-argon-high", "DroidProxy: Gemini 4 Argon (High)")
+  geminiModel("gemini-4-argon-high", "DroidProxy: Gemini 4 Argon (High)"),
+  // Claude served by the Google AI Pro/Ultra subscription instead of a Claude one.
+  // The ag- aliases are rewritten to Antigravity's IDs in proxy.js, as on macOS.
+  geminiModel("ag-c55o-high", "DroidProxy: Claude Opus 5.5 (High) via Google", ["high"], { maxOutputTokens: 128000, maxContextLimit: 1000000 }),
+  geminiModel("ag-c55s-high", "DroidProxy: Claude Sonnet 5.5 (High) via Google", ["high"], { maxOutputTokens: 128000, maxContextLimit: 1000000 }),
+  // CLIProxyAPI strips the kimi- prefix and sends Kimi Code's native model ID.
+  kimiModel("kimi-k3", "DroidProxy: Kimi K3", 65536, "max"),
+  kimiModel("kimi-k2.6", "DroidProxy: Kimi K2.6", 262144, "high")
 ];
 const DROIDPROXY_MODEL_PREFIXES = ["custom:droidproxy:", "custom:CC:"];
 
@@ -459,6 +480,7 @@ function fetchUsage(accountId) {
   if (!account) throw new Error("Account not found");
   if (account.provider === "claude") return fetchClaudeUsage(account);
   if (account.provider === "antigravity") return fetchGeminiUsage(account);
+  if (account.provider === "kimi") throw new Error("Kimi does not expose usage limits.");
   return fetchCodexUsage(accountId);
 }
 

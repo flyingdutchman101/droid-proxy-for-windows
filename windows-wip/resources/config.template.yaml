@@ -30,7 +30,5 @@ generative-language-api-key: []
 oauth-excluded-models:
   gemini:
     - "*"
-  kimi:
-    - "*"
   cursor:
     - "*"

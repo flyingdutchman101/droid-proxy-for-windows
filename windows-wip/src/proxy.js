@@ -85,6 +85,13 @@ function sanitizeThinkingBlocks(body) {
   return changed;
 }
 
+// Factory-facing aliases for Claude served through Antigravity (Google AI
+// Pro/Ultra), kept distinct from the Claude-subscription model IDs.
+const ANTIGRAVITY_MODEL_ALIASES = {
+  "ag-c55o-high": "claude-opus-5-5-high",
+  "ag-c55s-high": "claude-sonnet-5-5-high"
+};
+
 function prepareRequest(headers, bodyBuffer) {
   if (!bodyBuffer.length) return bodyBuffer;
 
@@ -94,11 +101,20 @@ function prepareRequest(headers, bodyBuffer) {
   } catch {
     return bodyBuffer;
   }
-  if (!isClaudeModel(body?.model)) return bodyBuffer;
 
-  const visibleThinking = ["enabled", "adaptive", "auto"].includes(body.thinking?.type);
-  rewriteAnthropicBeta(headers, visibleThinking);
-  return sanitizeThinkingBlocks(body) ? Buffer.from(JSON.stringify(body), "utf8") : bodyBuffer;
+  let changed = false;
+  const alias = ANTIGRAVITY_MODEL_ALIASES[body?.model];
+  if (alias) {
+    body.model = alias;
+    changed = true;
+  }
+
+  if (isClaudeModel(body?.model)) {
+    const visibleThinking = ["enabled", "adaptive", "auto"].includes(body.thinking?.type);
+    rewriteAnthropicBeta(headers, visibleThinking);
+    changed = sanitizeThinkingBlocks(body) || changed;
+  }
+  return changed ? Buffer.from(JSON.stringify(body), "utf8") : bodyBuffer;
 }
 
 function createFrontProxy({ targetHost, targetPort, log }) {

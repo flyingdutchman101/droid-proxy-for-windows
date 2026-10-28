@@ -134,7 +134,7 @@ async function refreshUsage() {
 
   elements.usage.className = "list muted";
   elements.usage.textContent = "Fetching usage limits...";
-  const order = ["codex", "claude", "antigravity"];
+  const order = ["codex", "claude", "antigravity", "kimi"];
   usable.sort((a, b) => order.indexOf(a.provider) - order.indexOf(b.provider));
   renderUsage(await Promise.all(usable.map(async (account) => {
     try {
