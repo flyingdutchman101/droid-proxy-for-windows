@@ -58,7 +58,7 @@ const DEFAULT_ROLE_MODELS = {
   },
   legal: {
     orchestrator: role("gemini-4-argon-high", "claude-opus-5-5", "ag-c55o-high"),
-    worker: role("gemini-3.8-flash-high", "claude-haiku-5-5", "gpt-6.1-terra"),
+    worker: role("gemini-3.8-flash-high", "claude-haiku-5-5", "ag-c55s-high"),
     validator: role("claude-fable-5-1", "claude-opus-5-5", "gemini-4-argon-high")
   },
   business: {
@@ -121,6 +121,19 @@ const DEFAULT_MISSION_OVERFLOW_MODELS = ["deepseek/deepseek-v4-pro"];
 // Claude quota. So normal Auto sessions in those categories use it only while
 // Claude has plenty of quota left.
 const DEFAULT_PREMIUM = { enabled: true, model: "claude-fable-5-1", threshold: 60, categories: ["legal", "business", "math"] };
+
+// Categories where some model families are too weak to use even as a backup.
+// GPT 6 models score 58-69% on the Vals Legal Index (Argon 77%, GLM-5.3 75%,
+// Opus 72%), so legal balances only across legal-capable models. Opus comes
+// before Fable so equal Claude quota picks the cheaper model; Fable is chosen
+// through the premium rule or as a backup.
+const CATEGORY_POOLS = {
+  legal: ["gemini-4-argon-high", "ag-c55o-high", "claude-opus-5-5", "claude-fable-5-1"]
+};
+const CATEGORY_EXCLUDES = {
+  legal: ["gpt-"]
+};
+const isExcluded = (model, prefixes) => (prefixes || []).some((prefix) => model.startsWith(prefix));
 
 function textOf(content) {
   if (typeof content === "string") return content;
@@ -186,10 +199,12 @@ function createRouter({ targetHost, targetPort, log, getConfig, onFallback }) {
   // Primary first, then any role backup, then the primary's chain; models still
   // cooling down are skipped unless nothing else is left, so a request is never
   // refused without trying.
-  function candidatesFor(model, roleBackups = []) {
+  // `exclude`: model-ID prefixes never used as backups for this request (the
+  // chosen model itself is always kept).
+  function candidatesFor(model, roleBackups = [], exclude = []) {
     const config = getConfig();
     const chain = config.fallbackEnabled ? [...roleBackups, ...(config.fallbackChains[model] || [])] : [];
-    const ordered = [model, ...chain].filter((item, index, all) => item && all.indexOf(item) === index);
+    const ordered = [model, ...chain.filter((item) => !isExcluded(item, exclude))].filter((item, index, all) => item && all.indexOf(item) === index);
     const available = ordered.filter((item) => !isCooling(item));
     return available.length ? available : ordered;
   }
@@ -257,8 +272,10 @@ function createRouter({ targetHost, targetPort, log, getConfig, onFallback }) {
       pool = [cell.model, cell.backup, cell.backup2];
     } else {
       const model = config.categoryModels[category] || DEFAULT_CATEGORY_MODELS[category] || DEFAULT_CATEGORY_MODELS.coding;
-      pool = [model, ...(config.fallbackChains[model] || []).slice(0, 3)];
+      pool = [model, ...(CATEGORY_POOLS[category] || (config.fallbackChains[model] || []).slice(0, 3))];
     }
+    const exclude = CATEGORY_EXCLUDES[category] || [];
+    pool = pool.filter((item, index) => index === 0 || (item && !isExcluded(item, exclude)));
     const premium = config.premium || DEFAULT_PREMIUM;
     const premiumApplies = config.balanced && !roleName && premium.enabled && premium.categories.includes(category) && config.isAvailable(premium.model);
     // The premium model also joins the pool as a backup.
@@ -275,7 +292,7 @@ function createRouter({ targetHost, targetPort, log, getConfig, onFallback }) {
       pick = { model: pool[0], reason: "" };
     }
     // The rest of the pool stays as ordered backups behind the chosen model.
-    const choice = { category, role: roleName, model: pick.model, backups: pool.filter((item) => item !== pick.model) };
+    const choice = { category, role: roleName, model: pick.model, backups: pool.filter((item) => item !== pick.model), exclude };
     sessions.set(key, choice);
     if (sessions.size > 1000) sessions.delete(sessions.keys().next().value);
     log(`Auto${roleName ? ` ${roleName}` : ""}: new session classified as ${category}; using ${choice.model}${pick.reason ? ` (${pick.reason})` : ""}`);

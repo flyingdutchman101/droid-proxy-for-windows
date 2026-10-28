@@ -169,12 +169,14 @@ function createFrontProxy({ targetHost, targetPort, log, router = null, usageTra
 
       let primary = parsed.model;
       let roleBackups = [];
+      let exclude = [];
       if (router && isAutoModel(primary)) {
         const choice = await router.resolveAuto(baseHeaders, parsed, primary);
         primary = choice.model;
         roleBackups = choice.backups;
+        exclude = choice.exclude || [];
       }
-      const candidates = router ? router.candidatesFor(primary, roleBackups) : [primary];
+      const candidates = router ? router.candidatesFor(primary, roleBackups, exclude) : [primary];
 
       for (let index = 0; index < candidates.length; index += 1) {
         const model = candidates[index];
