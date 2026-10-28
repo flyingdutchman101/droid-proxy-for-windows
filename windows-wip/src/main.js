@@ -1080,7 +1080,9 @@ function createWindow() {
       appId: APP_USER_MODEL_ID,
       relaunchCommand: `"${portableExe}"`,
       relaunchDisplayName: APP_NAME,
-      appIconPath: taskbarIconPath(),
+      // The taskbar only accepts an exe icon resource here; an .ico file shows
+      // up as a blank document. The portable exe embeds the app icon.
+      appIconPath: portableExe,
       appIconIndex: 0
     });
   }
@@ -1109,8 +1111,9 @@ function showWindow() {
   mainWindow.focus();
 }
 
-// Windows caches taskbar and pin icons by file path, so an icon update behind
-// the same path keeps showing the old artwork. Name the file after its content.
+// Window and tray icon. Windows caches icons by file path, so an icon update
+// behind the same path can keep showing old artwork; name the file after its
+// content. (The taskbar group's relaunch icon must be the exe, see setAppDetails.)
 function taskbarIconPath() {
   const source = getResourcePath("icon.ico");
   try {
