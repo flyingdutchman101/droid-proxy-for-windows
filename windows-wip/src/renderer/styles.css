@@ -679,3 +679,28 @@ label {
   color: var(--warning);
   border: 1px solid rgba(251, 191, 36, 0.45);
 }
+
+.other-providers > summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 12px;
+  padding: 6px 2px;
+}
+
+.other-providers > .provider-list {
+  margin-top: 6px;
+}
+
+.usage-detail {
+  display: block;
+  margin-top: 2px;
+}
+
+.usage-note {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.usage-note a {
+  color: var(--accent-strong);
+}

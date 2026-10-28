@@ -199,43 +199,56 @@ async function refreshRouting() {
   renderRouting(await api.routing());
 }
 
+// Configured providers stay visible; the rest fold into "Other providers".
 function renderApiProviders(providers) {
-  document.querySelector("#api-provider-list").innerHTML = providers.map((provider) => {
-    const regions = provider.regions.map((region) =>
-      `<option value="${escapeHtml(region.key)}" ${region.key === provider.region ? "selected" : ""}>${escapeHtml(region.label)} · ${escapeHtml(region.residency)}</option>`).join("");
-    return `
-      <div class="provider api" data-api="${escapeHtml(provider.key)}">
-        <div class="provider-head">
-          <span class="provider-logo monogram">${escapeHtml(provider.label[0])}</span>
-          <span class="provider-name">${escapeHtml(provider.label)} <small>${escapeHtml(provider.models.join(", "))}</small></span>
-        </div>
-        <div class="api-controls">
-          <select class="api-region">${regions}</select>
-          <input class="api-key" type="password" placeholder="${provider.configured ? "Key saved (enter a new one to replace)" : "API key"}" autocomplete="off" spellcheck="false" />
-          <button class="primary small api-save">Save</button>
-          ${provider.configured ? `<button class="small api-clear">Remove</button>` : ""}
-        </div>
-        <div class="provider-accounts">
-          ${provider.configured
-            ? `<div class="authorized"><span class="auth-badge">Authorized</span><span class="auth-email">API key saved</span></div>`
-            : `<div class="authorized none">No key</div>`}
-        </div>
-      </div>`;
-  }).join("");
+  const row = (provider) => apiProviderRow(provider);
+  const configured = providers.filter((provider) => provider.configured);
+  const others = providers.filter((provider) => !provider.configured);
+  const wasOpen = document.querySelector("#other-api-providers")?.open;
+  document.querySelector("#api-provider-list").innerHTML = configured.map(row).join("") + (others.length ? `
+    <details id="other-api-providers" class="other-providers" ${wasOpen || !configured.length ? "open" : ""}>
+      <summary>Other providers (${others.length})</summary>
+      <div class="provider-list">${others.map(row).join("")}</div>
+    </details>` : "");
+}
+
+function apiProviderRow(provider) {
+  const regions = provider.regions.map((region) =>
+    `<option value="${escapeHtml(region.key)}" ${region.key === provider.region ? "selected" : ""}>${escapeHtml(region.label)} · ${escapeHtml(region.residency)}</option>`).join("");
+  return `
+    <div class="provider api ${provider.configured ? "connected" : ""}" data-api="${escapeHtml(provider.key)}">
+      <div class="provider-head">
+        <img class="provider-logo" src="icons/${escapeHtml(provider.key)}.svg" alt="" />
+        <span class="provider-name">${escapeHtml(provider.label)} <small>${escapeHtml(provider.models.join(", "))}</small></span>
+      </div>
+      <div class="api-controls">
+        <select class="api-region">${regions}</select>
+        <input class="api-key" type="password" placeholder="${provider.configured ? "Key saved (enter a new one to replace)" : "API key"}" autocomplete="off" spellcheck="false" />
+        <button class="primary small api-save">Save</button>
+        ${provider.configured ? `<button class="small api-clear">Remove</button>` : ""}
+      </div>
+      <div class="provider-accounts">
+        ${provider.configured
+          ? `<div class="authorized"><span class="auth-badge">Authorized</span><span class="auth-email">API key saved</span></div>`
+          : `<div class="authorized none">No key</div>`}
+      </div>
+    </div>`;
 }
 
 async function refreshApiProviders() {
   renderApiProviders(await api.apiProviders());
 }
 
+// `results`: { title, windows, error, note }. API entries can carry both a
+// balance error and token windows, so both are shown.
 function renderUsage(results) {
   elements.usage.className = "list";
-  elements.usage.innerHTML = results.map(({ account, windows, error }) => `
+  elements.usage.innerHTML = results.map(({ title, windows, error, note }) => `
     <div class="usage-account">
-      <div class="usage-account-title">${escapeHtml(account.providerLabel)} · ${escapeHtml(account.email)}</div>
-      ${error ? `<span class="muted">${escapeHtml(error)}</span>`
-        : windows.length ? renderUsageWindows(windows)
-        : `<span class="muted">Usage response did not include quota windows.</span>`}
+      <div class="usage-account-title">${escapeHtml(title)}</div>
+      ${error ? `<span class="muted">${escapeHtml(error)}</span>` : ""}
+      ${windows.length ? renderUsageWindows(windows) : error ? "" : `<span class="muted">Usage response did not include quota windows.</span>`}
+      ${note ? `<span class="usage-note">${escapeHtml(note)}</span>` : ""}
     </div>
   `).join("");
 }
@@ -247,11 +260,12 @@ function renderUsageWindows(windows) {
     return `
       <div class="usage-window">
         <strong>${escapeHtml(window.title)}</strong>
-        ${remaining === null ? "<span>Usage unavailable</span>" : `
+        ${remaining === null ? (window.detail ? "" : "<span>Usage unavailable</span>") : `
           <div class="bar"><div class="bar-fill ${low ? "low" : ""}" style="width: ${remaining}%"></div></div>
           <span>${remaining}% left</span>
         `}
         ${window.resetText ? `<span> · resets ${escapeHtml(window.resetText)}</span>` : ""}
+        ${window.detail ? `<span class="usage-detail">${escapeHtml(window.detail)}</span>` : ""}
       </div>
     `;
   }).join("");
@@ -281,23 +295,31 @@ async function refreshUsage() {
   const accounts = currentAccounts.length ? currentAccounts : await refreshAccounts();
   // Expired Claude tokens are refreshed by the usage fetch, so only skip disabled ones.
   const usable = accounts.filter((item) => !item.disabled && item.hasAccessToken);
-  if (!usable.length) {
-    elements.usage.className = "list muted";
-    elements.usage.textContent = "Connect an account to display quota windows.";
-    return;
-  }
-
   elements.usage.className = "list muted";
   elements.usage.textContent = "Fetching usage limits...";
   const order = ["codex", "claude", "antigravity", "kimi"];
   usable.sort((a, b) => order.indexOf(a.provider) - order.indexOf(b.provider));
-  renderUsage(await Promise.all(usable.map(async (account) => {
-    try {
-      return { account, windows: await api.usage(account.id) };
-    } catch (error) {
-      return { account, windows: [], error: cleanIpcError(error) };
-    }
-  })));
+  const [subscriptions, apiResults] = await Promise.all([
+    Promise.all(usable.map(async (account) => {
+      const title = `${account.providerLabel} · ${account.email}`;
+      try {
+        return { title, windows: await api.usage(account.id) };
+      } catch (error) {
+        return { title, windows: [], error: cleanIpcError(error) };
+      }
+    })),
+    api.apiUsage().catch(() => [])
+  ]);
+  const results = [
+    ...subscriptions,
+    ...apiResults.map((item) => ({ title: `${item.label} · API key`, windows: item.windows, error: item.error, note: item.note }))
+  ];
+  if (!results.length) {
+    elements.usage.className = "list muted";
+    elements.usage.textContent = "Connect an account or add an API key to display usage.";
+    return;
+  }
+  renderUsage(results);
 }
 
 // Electron prefixes rejected IPC calls with "Error invoking remote method ...".

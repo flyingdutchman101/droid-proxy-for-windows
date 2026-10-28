@@ -10,6 +10,7 @@ contextBridge.exposeInMainWorld("droidProxy", {
   login: (provider) => ipcRenderer.invoke("auth:login", provider),
   accounts: () => ipcRenderer.invoke("auth:accounts"),
   usage: (accountId) => ipcRenderer.invoke("usage:fetch", accountId),
+  apiUsage: () => ipcRenderer.invoke("usage:api"),
   factoryStatus: () => ipcRenderer.invoke("factory:status"),
   applyFactory: () => ipcRenderer.invoke("factory:apply"),
   openAuthFolder: () => ipcRenderer.invoke("paths:openAuth"),

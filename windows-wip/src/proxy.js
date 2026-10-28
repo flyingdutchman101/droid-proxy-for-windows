@@ -95,11 +95,17 @@ const ANTIGRAVITY_MODEL_ALIASES = {
 
 // Builds the upstream body for one attempt. `raw` is reused untouched when
 // nothing changes so Anthropic prompt-cache key ordering is preserved.
-function prepareBody(headers, raw, model) {
+function prepareBody(headers, raw, model, { includeUsage = false } = {}) {
   const body = JSON.parse(raw.toString("utf8"));
   let changed = body.model !== model;
   body.model = ANTIGRAVITY_MODEL_ALIASES[model] || model;
   changed = changed || body.model !== model;
+
+  // Streamed Chat Completions only report token usage when asked.
+  if (includeUsage && body.stream === true && Array.isArray(body.messages) && !body.stream_options?.include_usage) {
+    body.stream_options = { ...(body.stream_options || {}), include_usage: true };
+    changed = true;
+  }
 
   if (isClaudeModel(body.model)) {
     const visibleThinking = ["enabled", "adaptive", "auto"].includes(body.thinking?.type);
@@ -123,7 +129,7 @@ function sendUpstream({ targetHost, targetPort }, req, headers, body) {
   });
 }
 
-function createFrontProxy({ targetHost, targetPort, log, router = null }) {
+function createFrontProxy({ targetHost, targetPort, log, router = null, usageTracker = null }) {
   const target = { targetHost, targetPort };
   const failUpstream = (res, error) => {
     log(`Proxy upstream error: ${error.message}`);
@@ -173,13 +179,17 @@ function createFrontProxy({ targetHost, targetPort, log, router = null }) {
       for (let index = 0; index < candidates.length; index += 1) {
         const model = candidates[index];
         const headers = { ...baseHeaders };
+        const tracked = Boolean(usageTracker?.tracks(model));
+        // Uncompressed responses so usage can be read from them.
+        if (tracked) delete headers["accept-encoding"];
         let upstreamRes;
         try {
-          upstreamRes = await sendUpstream(target, req, headers, prepareBody(headers, raw, model));
+          upstreamRes = await sendUpstream(target, req, headers, prepareBody(headers, raw, model, { includeUsage: tracked && req.url.includes("/chat/completions") }));
         } catch (error) {
           failUpstream(res, error);
           return;
         }
+        if (tracked) usageTracker.observe(model, upstreamRes);
 
         const exhausted = router && FALLBACK_STATUSES.has(upstreamRes.statusCode);
         if (exhausted) {

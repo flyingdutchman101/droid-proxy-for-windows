@@ -37,10 +37,23 @@ const API_PROVIDERS = {
     ]
   },
   qwen: {
-    label: "Qwen (Alibaba Model Studio)",
+    label: "Qwen Cloud",
+    // Token Plan keys (sk-sp-) only work on the Token Plan host; pay-as-you-go
+    // keys (sk-ws-/sk-) use the region hosts. A region may list its own models.
     regions: {
-      singapore: { label: "Singapore", baseUrl: "https://dashscope-intl.aliyuncs.com/compatible-mode/v1", residency: "Singapore" },
-      china: { label: "China (Beijing)", baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1", residency: "China" }
+      tokenplan: {
+        label: "Token Plan (sk-sp- keys)",
+        baseUrl: "https://token-plan.maas.qwencloudapi.com/compatible-mode/v1",
+        residency: "Singapore",
+        models: [
+          { name: "qwen3.8-max", displayName: "Qwen3.8 Max", maxContextLimit: 991808, maxOutputTokens: 131072, efforts: ["high"] },
+          { name: "qwen3.8-flash", displayName: "Qwen3.8 Flash", maxContextLimit: 1000000, maxOutputTokens: 65536, efforts: ["high"] },
+          { name: "glm-5.3", displayName: "GLM-5.3 (Qwen Token Plan)", maxContextLimit: 1000000, maxOutputTokens: 128000, efforts: REASONING },
+          { name: "deepseek-v4-pro", displayName: "DeepSeek V4 Pro (Qwen Token Plan)", maxContextLimit: 1000000, maxOutputTokens: 128000, efforts: REASONING }
+        ]
+      },
+      singapore: { label: "Pay-as-you-go · Singapore", baseUrl: "https://ap-southeast-1.maas.qwencloudapi.com/compatible-mode/v1", residency: "Singapore" },
+      china: { label: "Pay-as-you-go · China (Beijing)", baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1", residency: "China" }
     },
     models: [
       { name: "qwen3.8-max", displayName: "Qwen3.8 Max", maxContextLimit: 991808, maxOutputTokens: 131072, efforts: ["high"] },
@@ -94,15 +107,25 @@ function providerRegion(providerKey, regionKey) {
   return provider.regions[regionKey] || Object.values(provider.regions)[0];
 }
 
+function providerModels(providerKey, regionKey) {
+  return providerRegion(providerKey, regionKey)?.models || API_PROVIDERS[providerKey].models;
+}
+
+// Picks the region a key belongs to when its prefix makes that unambiguous.
+function regionForKey(providerKey, apiKey, regionKey) {
+  if (providerKey === "qwen" && /^sk-sp-/.test(apiKey)) return "tokenplan";
+  if (providerKey === "qwen" && regionKey === "tokenplan" && /^sk-/.test(apiKey)) return "singapore";
+  return regionKey;
+}
+
 // YAML for the v8 `api-keys:` section. JSON strings are valid YAML scalars,
 // so every value is emitted with JSON.stringify to keep keys safely quoted.
 function apiKeysYaml(configured) {
   const groups = Object.entries(configured)
     .filter(([key, value]) => API_PROVIDERS[key] && value.apiKey)
     .map(([key, value]) => {
-      const provider = API_PROVIDERS[key];
       const region = providerRegion(key, value.region);
-      const models = provider.models.map((model) => {
+      const models = providerModels(key, value.region).map((model) => {
         const lines = [
           `        - name: ${JSON.stringify(model.name)}`,
           `          alias: ${JSON.stringify(model.name)}`,
@@ -127,4 +150,4 @@ function apiKeysYaml(configured) {
   return `\n# API-key providers configured in DroidProxy\napi-keys:\n  openai-compatibility:\n${groups.join("\n")}\n`;
 }
 
-module.exports = { API_PROVIDERS, apiModelId, providerRegion, apiKeysYaml };
+module.exports = { API_PROVIDERS, apiModelId, providerRegion, providerModels, regionForKey, apiKeysYaml };

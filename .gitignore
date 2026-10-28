@@ -55,3 +55,4 @@ graphify-out/cache/
 
 # Vix tool data
 .vix/
+windows-wip/dist-build/

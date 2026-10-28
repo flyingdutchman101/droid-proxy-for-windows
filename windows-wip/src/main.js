@@ -15,7 +15,8 @@ const {
   DEFAULT_CLASSIFIER_MODELS,
   createRouter
 } = require("./router");
-const { API_PROVIDERS, apiModelId, providerRegion, apiKeysYaml } = require("./providers");
+const { API_PROVIDERS, apiModelId, providerRegion, providerModels, regionForKey, apiKeysYaml } = require("./providers");
+const { createUsageTracker } = require("./usage");
 
 const APP_NAME = "VeryCuteDroidProxy";
 const APP_USER_MODEL_ID = "io.automaze.droidproxy.windows";
@@ -132,6 +133,7 @@ let mainWindow;
 let proxyProcess = null;
 let frontProxy = null;
 let router = null;
+let usageTracker = null;
 let tray = null;
 let trayHintShown = false;
 let isQuitting = false;
@@ -285,7 +287,7 @@ function configuredApiProviders() {
 
 // API-key models become Factory models only once their provider has a key.
 function apiFactoryModels() {
-  return Object.keys(configuredApiProviders()).flatMap((providerKey) => API_PROVIDERS[providerKey].models.map((model) => ({
+  return Object.entries(configuredApiProviders()).flatMap(([providerKey, entry]) => providerModels(providerKey, entry.region).map((model) => ({
     model: apiModelId(providerKey, model.name),
     displayName: `DroidProxy: ${model.displayName}`,
     providerKey,
@@ -490,7 +492,7 @@ function getRouter() {
 
 function startFrontProxy() {
   return new Promise((resolve, reject) => {
-    const server = createFrontProxy({ targetHost: settings.host, targetPort: backendPort(), log, router: getRouter() });
+    const server = createFrontProxy({ targetHost: settings.host, targetPort: backendPort(), log, router: getRouter(), usageTracker: getUsageTracker() });
     server.once("error", (error) => {
       reject(new Error(`Could not listen on ${settings.host}:${settings.port}: ${error.message}`));
     });
@@ -630,6 +632,80 @@ async function fetchCodexUsage(accountId) {
 
   const json = await response.json();
   return parseUsageWindows(json);
+}
+
+// API-key models are tracked by their provider prefix ("qwen/qwen3.8-max").
+function getUsageTracker() {
+  if (!usageTracker) {
+    usageTracker = createUsageTracker({
+      filePath: path.join(AUTH_DIR, "droidproxy-windows-api-usage.json"),
+      log,
+      tracks: (model) => typeof model === "string" && Object.keys(API_PROVIDERS).some((key) => model.startsWith(`${key}/`))
+    });
+  }
+  return usageTracker;
+}
+
+// Qwen Cloud grants new accounts a free quota per model, "typically 1,000,000
+// tokens" for 90 days, but exposes no API to read what's left.
+const QWEN_FREE_QUOTA_TOKENS = 1000000;
+
+const formatTokens = (count) => count >= 1e6 ? `${(count / 1e6).toFixed(2)}M` : count >= 1e3 ? `${(count / 1e3).toFixed(1)}K` : String(count);
+const sinceText = (iso) => new Date(iso).toLocaleDateString(undefined, { day: "numeric", month: "short" });
+
+function tokenWindows(providerKey, regionKey) {
+  const models = getUsageTracker().summary();
+  // Token Plan bills in Credits, so a token-based free-quota estimate would mislead.
+  const estimateFreeQuota = providerKey === "qwen" && regionKey !== "tokenplan";
+  return providerModels(providerKey, regionKey).map((model) => {
+    const id = apiModelId(providerKey, model.name);
+    const item = models[id];
+    if (!item) return { title: `${model.displayName} · tokens`, detail: "No requests through DroidProxy yet" };
+    const used = item.input + item.output;
+    const base = {
+      title: `${model.displayName} · tokens`,
+      detail: `${formatTokens(item.input)} in · ${formatTokens(item.output)} out · ${item.requests} requests since ${sinceText(item.since)}`
+    };
+    if (item.quotaError) base.detail += ` · quota error: ${item.quotaError.message}`;
+    if (!estimateFreeQuota) return base;
+    const remaining = Math.max(0, 100 - (used / QWEN_FREE_QUOTA_TOKENS) * 100);
+    return {
+      ...base,
+      title: `${model.displayName} · free quota (estimate)`,
+      remainingPercent: item.quotaError ? 0 : remaining,
+      detail: `${base.detail} · ${formatTokens(used)} of ${formatTokens(QWEN_FREE_QUOTA_TOKENS)}`
+    };
+  });
+}
+
+async function deepseekBalance(apiKey) {
+  const response = await fetch("https://api.deepseek.com/user/balance", { headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json" } });
+  if (!response.ok) throw new Error(`DeepSeek balance API returned ${response.status}`);
+  const json = await response.json();
+  const symbol = { USD: "$", CNY: "¥" };
+  return (json.balance_infos || []).map((info) => ({
+    title: `Balance (${info.currency})`,
+    detail: `${symbol[info.currency] || ""}${info.total_balance} available (granted ${info.granted_balance}, topped up ${info.topped_up_balance})${json.is_available ? "" : " · not enough to make calls"}`
+  }));
+}
+
+async function apiUsage() {
+  const configured = configuredApiProviders();
+  return Promise.all(Object.entries(configured).map(async ([key, entry]) => {
+    const result = { provider: key, label: API_PROVIDERS[key].label, windows: [], note: "" };
+    try {
+      if (key === "deepseek") result.windows.push(...await deepseekBalance(entry.apiKey));
+    } catch (error) {
+      result.error = error.message;
+    }
+    result.windows.push(...tokenWindows(key, entry.region));
+    if (key === "qwen" && entry.region === "tokenplan") {
+      result.note = "Token Plan usage is measured in monthly Credits with no usage API. Token counts cover DroidProxy traffic only; remaining Credits are at home.qwencloud.com/analytics/token-plan/individual.";
+    } else if (key === "qwen") {
+      result.note = "Qwen Cloud has no usage API for API keys. Counts cover DroidProxy traffic only; the console's Free Tier page (home.qwencloud.com/benefits) is authoritative.";
+    }
+    return result;
+  }));
 }
 
 function fetchUsage(accountId) {
@@ -999,6 +1075,7 @@ if (!hasInstanceLock) {
     await killOrphanedProxy();
     resourcesRoot = syncRuntimeResources();
     log(`Using resources from ${resourcesRoot}`);
+    fixApiKeyRegions();
     writeConfig();
     createTray();
     createWindow();
@@ -1026,6 +1103,7 @@ ipcMain.handle("logs:get", () => logs);
 ipcMain.handle("auth:login", (_event, providerKey) => runLogin(providerKey));
 ipcMain.handle("auth:accounts", () => listAccounts());
 ipcMain.handle("usage:fetch", (_event, accountId) => fetchUsage(accountId));
+ipcMain.handle("usage:api", () => apiUsage());
 ipcMain.handle("factory:status", () => factoryStatus());
 ipcMain.handle("factory:apply", () => applyFactoryModels());
 
@@ -1121,7 +1199,7 @@ function apiProviderState() {
       label: provider.label,
       region: configured?.region || Object.keys(provider.regions)[0],
       regions: Object.entries(provider.regions).map(([regionKey, region]) => ({ key: regionKey, label: region.label, residency: region.residency })),
-      models: provider.models.map((model) => model.displayName),
+      models: providerModels(key, configured?.region).map((model) => model.displayName),
       configured: Boolean(configured && decryptSecret(configured.keyEnc))
     };
   });
@@ -1147,10 +1225,22 @@ ipcMain.handle("apikeys:set", (_event, { provider, apiKey, region }) => {
   const key = String(apiKey || "").trim();
   if (!key && !current) throw new Error("Enter an API key first.");
   const keyEnc = key ? encryptSecret(key) : current.keyEnc;
-  saveSettings({ apiProviders: { ...settings.apiProviders, [provider]: { region, keyEnc } } });
-  log(`API key saved for ${API_PROVIDERS[provider].label} (${providerRegion(provider, region).label})`);
+  const effectiveRegion = regionForKey(provider, key || decryptSecret(current.keyEnc), region);
+  saveSettings({ apiProviders: { ...settings.apiProviders, [provider]: { region: effectiveRegion, keyEnc } } });
+  log(`API key saved for ${API_PROVIDERS[provider].label} (${providerRegion(provider, effectiveRegion).label})`);
   return apiProviderState();
 });
+
+// Keys saved before region detection existed may sit on the wrong endpoint.
+function fixApiKeyRegions() {
+  for (const [provider, entry] of Object.entries(settings.apiProviders || {})) {
+    const key = decryptSecret(entry.keyEnc);
+    const region = key ? regionForKey(provider, key, entry.region) : entry.region;
+    if (region === entry.region) continue;
+    saveSettings({ apiProviders: { ...settings.apiProviders, [provider]: { ...entry, region } } });
+    log(`Moved ${API_PROVIDERS[provider].label} key to ${providerRegion(provider, region).label} to match its key type`);
+  }
+}
 ipcMain.handle("apikeys:clear", (_event, provider) => {
   const next = { ...settings.apiProviders };
   delete next[provider];

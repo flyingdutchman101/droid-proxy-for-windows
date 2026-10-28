@@ -5,12 +5,13 @@ Electron-based Windows app that runs the bundled [CLIProxyAPI](https://github.co
 ## Features
 
 - One-click OAuth login for Codex, Claude, Gemini (via Google Antigravity), and Kimi Code. Each connected account is listed under its provider as **Authorized**.
-- API keys for DeepSeek, Kimi API (Moonshot), GLM (Z.ai), Qwen (Alibaba Model Studio), MiniMax, Mistral (EU endpoint available), and OpenRouter. Keys are encrypted with Windows DPAPI; their models get a provider prefix (for example `deepseek/deepseek-v4-pro`). China-hosted endpoints process your code in China.
+- API keys for DeepSeek, Qwen Cloud, Kimi API (Moonshot), GLM (Z.ai), MiniMax, Mistral (EU endpoint available), and OpenRouter. Keys are encrypted with Windows DPAPI; their models get a provider prefix (for example `deepseek/deepseek-v4-pro`). Configured providers are listed first and the rest are folded away. China-hosted endpoints process your code in China.
+  - Qwen Cloud **Token Plan** keys (`sk-sp-`) are detected and sent to `token-plan.maas.qwencloudapi.com`, which also serves GLM-5.3 and DeepSeek V4 Pro. Pay-as-you-go keys use the region endpoints. Qwen Cloud's Token Plan terms restrict it to interactive tool use and forbid automation or batch use, so keep it out of unattended Missions.
 - **Auto routing:** pick **DroidProxy: Auto** in Factory. A fast model (Haiku 5.5, then Gemini 3.8 Flash, then GPT 6 Luna) classifies the first message of each session as coding, legal, business, writing, research, math, or quick, and the session stays on the model chosen for that category. Defaults come from independent leaderboards (Vals AI, Arena) and are editable in the app.
 - **Mission roles:** **Auto · Orchestrator**, **Auto · Worker**, and **Auto · Validator** pick a model per task type and role (strong planner, fast executor, independent reviewer from a different model family), each with its own backup.
 - **Factory modes:** set the model and reasoning effort for normal sessions, spec mode, and each Mission role from the app (`sessionDefaultSettings.model` / `specModeModel`, `missionOrchestratorModel`, `missionModelSettings.workerModel` / `validationWorkerModel`). "Use recommended" fills in the Auto models; broken model IDs are flagged.
 - **Backup models:** when a model returns 429/503/529 before any output, the same request is retried on the next model in its backup list, across providers, and the exhausted model is skipped until it cools down (Retry-After, or 10 minutes). A tray notification says which model took over.
-- Usage limits per connected account: Codex and Claude 5-hour/weekly windows, Gemini quota groups.
+- Usage limits per connected account: Codex and Claude 5-hour/weekly windows, Gemini quota groups. For API keys: the DeepSeek account balance, plus input/output tokens per model counted from responses that pass through DroidProxy (stored in `%USERPROFILE%\.cli-proxy-api\droidproxy-windows-api-usage.json`). Qwen Cloud has no usage API for API keys, so Qwen shows these counts with a pointer to the console.
 - Applies DroidProxy custom models to `~/.factory/settings.json` (a timestamped backup is written first):
   - Auto
   - GPT 6 Astra, GPT 6.1 Sol, GPT 6.1 Terra, GPT 6 Luna
@@ -65,3 +66,5 @@ npm run icon   # re-render resources/icon.png and icon.ico from resources/icon.s
 ## Credits
 
 Fork of [nikships/droidproxy](https://github.com/nikships/droidproxy) (MIT). The macOS app in `../src` is unchanged from upstream.
+
+API provider logos in `src/renderer/icons/` (DeepSeek, Qwen, Moonshot, Z.ai, MiniMax, Mistral, OpenRouter) are from [LobeHub Icons](https://github.com/lobehub/lobe-icons) (MIT). Logos are trademarks of their respective owners.
