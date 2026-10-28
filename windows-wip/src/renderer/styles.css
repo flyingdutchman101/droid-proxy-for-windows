@@ -414,3 +414,196 @@ label {
     width: 100%;
   }
 }
+
+.card-note {
+  margin: -4px 0 12px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.provider-list {
+  display: grid;
+  gap: 8px;
+}
+
+.provider {
+  min-width: 0;
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  padding: 10px;
+  background: rgba(0, 0, 0, 0.22);
+}
+
+.provider.connected {
+  border-color: rgba(74, 222, 128, 0.35);
+}
+
+.provider-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.provider-logo {
+  width: 26px;
+  height: 26px;
+  flex: none;
+  border-radius: 6px;
+  object-fit: contain;
+}
+
+.provider-logo.monogram {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.08);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.provider-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.provider-name small {
+  display: block;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 400;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.provider-accounts {
+  display: grid;
+  gap: 4px;
+  margin: 8px 0 0 36px;
+}
+
+.authorized {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  min-width: 0;
+}
+
+.authorized.none {
+  color: var(--muted);
+}
+
+.auth-badge {
+  flex: none;
+  border-radius: 999px;
+  padding: 1px 8px;
+  font-size: 11px;
+  color: var(--success);
+  background: rgba(74, 222, 128, 0.12);
+  border: 1px solid rgba(74, 222, 128, 0.35);
+}
+
+.authorized.off .auth-badge {
+  color: var(--warning);
+  background: rgba(251, 191, 36, 0.12);
+  border-color: rgba(251, 191, 36, 0.35);
+}
+
+.auth-email {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Region on its own line, then key + buttons, so long region names never push
+   the controls past the card edge. */
+.api-controls {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 6px;
+  align-items: center;
+  margin: 8px 0 0 36px;
+}
+
+.api-controls .api-region {
+  grid-column: 1 / -1;
+}
+
+.api-controls select,
+.api-controls input {
+  min-width: 0;
+  min-height: 28px;
+  padding: 4px 8px;
+  font-size: 12px;
+}
+
+.routing-row select,
+.chain-selects select {
+  min-width: 0;
+}
+
+.routing-list {
+  display: grid;
+  gap: 6px;
+}
+
+.routing-row {
+  display: grid;
+  grid-template-columns: 110px minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+  font-size: 12px;
+}
+
+.routing-row.chain {
+  grid-template-columns: 1fr;
+  gap: 4px;
+  padding: 6px 0;
+  border-top: 1px solid var(--panel-border);
+}
+
+.routing-label {
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chain-selects {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 4px;
+}
+
+.chain-selects select,
+.routing-row select {
+  min-height: 28px;
+  padding: 4px 6px;
+  font-size: 12px;
+}
+
+.cooling-list {
+  display: grid;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+
+.cooling {
+  font-size: 12px;
+  color: var(--warning);
+}
+
+.card-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.check-row {
+  font-size: 12px;
+}

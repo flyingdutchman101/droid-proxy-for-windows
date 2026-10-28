@@ -1,9 +1,18 @@
-const { app, BrowserWindow, ipcMain, shell, Tray, Menu } = require("electron");
+const { app, BrowserWindow, ipcMain, shell, Tray, Menu, safeStorage } = require("electron");
 const path = require("path");
 const fs = require("fs");
 const os = require("os");
 const { spawn, execFile } = require("child_process");
 const { createFrontProxy } = require("./proxy");
+const {
+  AUTO_MODEL_ID,
+  CATEGORIES,
+  DEFAULT_CATEGORY_MODELS,
+  DEFAULT_CHAINS,
+  DEFAULT_CLASSIFIER_MODELS,
+  createRouter
+} = require("./router");
+const { API_PROVIDERS, apiModelId, providerRegion, apiKeysYaml } = require("./providers");
 
 const APP_NAME = "DroidProxy Windows";
 const APP_USER_MODEL_ID = "io.automaze.droidproxy.windows";
@@ -22,7 +31,14 @@ const DEFAULT_SETTINGS = {
   model: "gpt-6.1-sol",
   maxOutputTokens: 128000,
   enableThinking: true,
-  reasoningEffort: "medium"
+  reasoningEffort: "medium",
+  autoEnabled: true,
+  categoryModels: DEFAULT_CATEGORY_MODELS,
+  classifierModels: DEFAULT_CLASSIFIER_MODELS,
+  fallbackEnabled: true,
+  fallbackChains: DEFAULT_CHAINS,
+  // { [providerKey]: { region, keyEnc } }; keys are encrypted with Windows DPAPI.
+  apiProviders: {}
 };
 
 // Auth file `type` -> login flag. Gemini goes through Google Antigravity OAuth,
@@ -105,6 +121,7 @@ const DROIDPROXY_MODEL_PREFIXES = ["custom:droidproxy:", "custom:CC:"];
 let mainWindow;
 let proxyProcess = null;
 let frontProxy = null;
+let router = null;
 let tray = null;
 let trayHintShown = false;
 let isQuitting = false;
@@ -168,9 +185,9 @@ function ensureDir(dir) {
 function loadSettings() {
   try {
     const raw = fs.readFileSync(SETTINGS_PATH, "utf8");
-    return { ...DEFAULT_SETTINGS, ...JSON.parse(raw) };
+    return sanitizeSettings({ ...DEFAULT_SETTINGS, ...JSON.parse(raw) });
   } catch {
-    return { ...DEFAULT_SETTINGS };
+    return sanitizeSettings({ ...DEFAULT_SETTINGS });
   }
 }
 
@@ -203,8 +220,88 @@ function sanitizeSettings(value) {
     model,
     maxOutputTokens: Number.isInteger(maxOutputTokens) && maxOutputTokens >= 1024 ? maxOutputTokens : DEFAULT_SETTINGS.maxOutputTokens,
     enableThinking: Boolean(value.enableThinking),
-    reasoningEffort
+    reasoningEffort,
+    autoEnabled: value.autoEnabled !== false,
+    categoryModels: Object.fromEntries(Object.keys(CATEGORIES).map((category) => {
+      const chosen = value.categoryModels?.[category];
+      return [category, typeof chosen === "string" && chosen ? chosen : DEFAULT_CATEGORY_MODELS[category]];
+    })),
+    classifierModels: stringList(value.classifierModels, DEFAULT_CLASSIFIER_MODELS),
+    fallbackEnabled: value.fallbackEnabled !== false,
+    fallbackChains: Object.fromEntries(Object.entries(value.fallbackChains || DEFAULT_CHAINS)
+      .filter(([model]) => typeof model === "string" && model)
+      .map(([model, chain]) => [model, stringList(chain, []).filter((item) => item !== model).slice(0, 6)])),
+    apiProviders: Object.fromEntries(Object.entries(value.apiProviders || {})
+      .filter(([key, entry]) => API_PROVIDERS[key] && typeof entry?.keyEnc === "string" && entry.keyEnc)
+      .map(([key, entry]) => [key, { region: providerRegionKey(key, entry.region), keyEnc: entry.keyEnc }]))
   };
+}
+
+function stringList(value, fallback) {
+  if (!Array.isArray(value)) return [...fallback];
+  return value.map((item) => String(item).trim()).filter(Boolean);
+}
+
+function providerRegionKey(providerKey, regionKey) {
+  const regions = API_PROVIDERS[providerKey].regions;
+  return regions[regionKey] ? regionKey : Object.keys(regions)[0];
+}
+
+function encryptSecret(secret) {
+  if (!safeStorage.isEncryptionAvailable()) throw new Error("Windows encryption is not available, so the key cannot be stored safely.");
+  return safeStorage.encryptString(secret).toString("base64");
+}
+
+function decryptSecret(encoded) {
+  try {
+    return safeStorage.decryptString(Buffer.from(encoded, "base64"));
+  } catch {
+    return "";
+  }
+}
+
+function configuredApiProviders() {
+  return Object.fromEntries(Object.entries(settings.apiProviders || {})
+    .map(([key, entry]) => [key, { region: entry.region, apiKey: decryptSecret(entry.keyEnc) }])
+    .filter(([, entry]) => entry.apiKey));
+}
+
+// API-key models become Factory models only once their provider has a key.
+function apiFactoryModels() {
+  return Object.keys(configuredApiProviders()).flatMap((providerKey) => API_PROVIDERS[providerKey].models.map((model) => ({
+    model: apiModelId(providerKey, model.name),
+    displayName: `DroidProxy: ${model.displayName}`,
+    providerKey,
+    provider: "generic-chat-completion-api",
+    maxOutputTokens: model.maxOutputTokens,
+    maxContextLimit: model.maxContextLimit,
+    supportedReasoningEfforts: model.efforts,
+    defaultReasoningEffort: model.efforts.includes("high") ? "high" : model.efforts[0]
+  })));
+}
+
+// Factory sends Auto requests in Anthropic format; CLIProxyAPI translates them
+// for whichever provider's model the router picks.
+const AUTO_FACTORY_MODEL = {
+  model: AUTO_MODEL_ID,
+  displayName: "DroidProxy: Auto (best model per task)",
+  providerKey: "auto",
+  provider: "anthropic",
+  maxOutputTokens: 128000,
+  supportedReasoningEfforts: ALL_EFFORTS,
+  defaultReasoningEffort: "high"
+};
+
+function allModelDefinitions() {
+  return [...FACTORY_MODELS, ...apiFactoryModels()];
+}
+
+function modelOptions() {
+  return allModelDefinitions().map((item) => ({
+    id: item.model,
+    label: item.displayName.replace(/^DroidProxy: /, ""),
+    provider: item.providerKey
+  }));
 }
 
 // cli-proxy-api listens one port above the public port; the front proxy owns
@@ -223,6 +320,7 @@ function writeConfig() {
     .replaceAll("__DEBUG__", String(Boolean(settings.debug)))
     .replaceAll("__REQUEST_RETRY__", String(settings.requestRetry))
     .replaceAll("__REQUEST_TIMEOUT__", settings.requestTimeout);
+  config += apiKeysYaml(configuredApiProviders());
   fs.writeFileSync(CONFIG_PATH, config);
   return CONFIG_PATH;
 }
@@ -331,9 +429,33 @@ function scheduleProxyRestart() {
   }, delay);
 }
 
+// Kept across backend restarts so cool-downs and Auto session choices survive.
+function getRouter() {
+  if (router && router.port === backendPort()) return router;
+  router = createRouter({
+    targetHost: settings.host,
+    targetPort: backendPort(),
+    log,
+    getConfig: () => ({
+      fallbackEnabled: settings.fallbackEnabled,
+      fallbackChains: settings.fallbackChains,
+      categoryModels: settings.categoryModels,
+      classifierModels: settings.classifierModels
+    }),
+    onFallback: (from, to, until) => {
+      const label = (id) => modelOptions().find((item) => item.id === id)?.label || id;
+      const when = until ? ` until about ${until.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}` : "";
+      if (tray) tray.displayBalloon({ title: "DroidProxy backup model", content: `${label(from)} is out of quota${when}. Using ${label(to)}.` });
+      sendState();
+    }
+  });
+  router.port = backendPort();
+  return router;
+}
+
 function startFrontProxy() {
   return new Promise((resolve, reject) => {
-    const server = createFrontProxy({ targetHost: settings.host, targetPort: backendPort(), log });
+    const server = createFrontProxy({ targetHost: settings.host, targetPort: backendPort(), log, router: getRouter() });
     server.once("error", (error) => {
       reject(new Error(`Could not listen on ${settings.host}:${settings.port}: ${error.message}`));
     });
@@ -685,10 +807,11 @@ function formatReset(date) {
 
 function factoryModels() {
   const origin = `http://${settings.host}:${settings.port}`;
-  return FACTORY_MODELS.map((modelDefinition, index) => {
+  const definitions = [...(settings.autoEnabled ? [AUTO_FACTORY_MODEL] : []), ...allModelDefinitions()];
+  return definitions.map((modelDefinition, index) => {
     const entry = {
       model: modelDefinition.model,
-      id: `custom:droidproxy:${modelDefinition.model}`,
+      id: `custom:droidproxy:${modelDefinition.model.replaceAll("/", "-")}`,
       index,
       // Anthropic clients append /v1/messages themselves.
       baseUrl: modelDefinition.provider === "anthropic" ? origin : `${origin}/v1`,
@@ -701,7 +824,7 @@ function factoryModels() {
     if (modelDefinition.maxContextLimit) {
       entry.maxContextLimit = modelDefinition.maxContextLimit;
     }
-    if (settings.enableThinking) {
+    if (settings.enableThinking && modelDefinition.supportedReasoningEfforts.length) {
       entry.enableThinking = true;
       entry.supportedReasoningEfforts = modelDefinition.supportedReasoningEfforts;
       entry.defaultReasoningEffort = modelDefinition.defaultReasoningEffort;
@@ -854,8 +977,13 @@ app.on("before-quit", () => {
   stopProxy();
 });
 
-ipcMain.handle("settings:get", () => settings);
-ipcMain.handle("settings:save", (_event, nextSettings) => saveSettings(nextSettings));
+// Encrypted API keys never leave the main process.
+const publicSettings = ({ apiProviders, ...rest }) => rest;
+ipcMain.handle("settings:get", () => publicSettings(settings));
+ipcMain.handle("settings:save", (_event, nextSettings) => {
+  const { apiProviders, ...allowed } = nextSettings || {};
+  return publicSettings(saveSettings(allowed));
+});
 ipcMain.handle("proxy:start", () => startProxy());
 ipcMain.handle("proxy:stop", () => stopProxy());
 ipcMain.handle("proxy:state", () => proxyState());
@@ -865,6 +993,65 @@ ipcMain.handle("auth:accounts", () => listAccounts());
 ipcMain.handle("usage:fetch", (_event, accountId) => fetchUsage(accountId));
 ipcMain.handle("factory:status", () => factoryStatus());
 ipcMain.handle("factory:apply", () => applyFactoryModels());
+
+function routingState() {
+  const cooling = router
+    ? [...router.cooldowns.entries()].filter(([, until]) => until > Date.now()).map(([model, until]) => ({ model, until: new Date(until).toISOString() }))
+    : [];
+  return {
+    autoEnabled: settings.autoEnabled,
+    fallbackEnabled: settings.fallbackEnabled,
+    categories: Object.entries(CATEGORIES).map(([key, description]) => ({ key, description })),
+    categoryModels: settings.categoryModels,
+    fallbackChains: settings.fallbackChains,
+    defaults: { categoryModels: DEFAULT_CATEGORY_MODELS, fallbackChains: DEFAULT_CHAINS },
+    models: modelOptions(),
+    cooling
+  };
+}
+
+function apiProviderState() {
+  return Object.entries(API_PROVIDERS).map(([key, provider]) => {
+    const configured = settings.apiProviders[key];
+    return {
+      key,
+      label: provider.label,
+      region: configured?.region || Object.keys(provider.regions)[0],
+      regions: Object.entries(provider.regions).map(([regionKey, region]) => ({ key: regionKey, label: region.label, residency: region.residency })),
+      models: provider.models.map((model) => model.displayName),
+      configured: Boolean(configured && decryptSecret(configured.keyEnc))
+    };
+  });
+}
+
+ipcMain.handle("routing:get", () => routingState());
+ipcMain.handle("routing:save", (_event, next) => {
+  saveSettings({
+    autoEnabled: next.autoEnabled,
+    fallbackEnabled: next.fallbackEnabled,
+    categoryModels: next.categoryModels,
+    fallbackChains: next.fallbackChains
+  });
+  return routingState();
+});
+ipcMain.handle("apikeys:list", () => apiProviderState());
+ipcMain.handle("apikeys:set", (_event, { provider, apiKey, region }) => {
+  if (!API_PROVIDERS[provider]) throw new Error("Unknown provider");
+  const current = settings.apiProviders[provider];
+  const key = String(apiKey || "").trim();
+  if (!key && !current) throw new Error("Enter an API key first.");
+  const keyEnc = key ? encryptSecret(key) : current.keyEnc;
+  saveSettings({ apiProviders: { ...settings.apiProviders, [provider]: { region, keyEnc } } });
+  log(`API key saved for ${API_PROVIDERS[provider].label} (${providerRegion(provider, region).label})`);
+  return apiProviderState();
+});
+ipcMain.handle("apikeys:clear", (_event, provider) => {
+  const next = { ...settings.apiProviders };
+  delete next[provider];
+  saveSettings({ apiProviders: next });
+  log(`API key removed for ${API_PROVIDERS[provider]?.label || provider}`);
+  return apiProviderState();
+});
 ipcMain.handle("paths:openAuth", () => {
   ensureDir(AUTH_DIR);
   shell.openPath(AUTH_DIR);

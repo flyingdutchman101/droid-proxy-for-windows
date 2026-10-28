@@ -5,7 +5,7 @@
   "main": "src/main.js",
   "scripts": {
     "start": "electron .",
-    "check": "node --check src/main.js && node --check src/proxy.js && node --check src/preload.js && node --check src/renderer/app.js",
+    "check": "node --check src/main.js && node --check src/proxy.js && node --check src/router.js && node --check src/providers.js && node --check src/preload.js && node --check src/renderer/app.js",
     "build:win": "electron-builder --win portable"
   },
   "keywords": [

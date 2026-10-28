@@ -1,4 +1,5 @@
 const http = require("http");
+const { AUTO_MODEL_ID, FALLBACK_STATUSES } = require("./router");
 
 // Front proxy that sits between Factory and cli-proxy-api, mirroring the Claude
 // request fixes the macOS ThinkingProxy applies:
@@ -92,56 +93,109 @@ const ANTIGRAVITY_MODEL_ALIASES = {
   "ag-c55s-high": "claude-sonnet-5-5-high"
 };
 
-function prepareRequest(headers, bodyBuffer) {
-  if (!bodyBuffer.length) return bodyBuffer;
+// Builds the upstream body for one attempt. `raw` is reused untouched when
+// nothing changes so Anthropic prompt-cache key ordering is preserved.
+function prepareBody(headers, raw, model) {
+  const body = JSON.parse(raw.toString("utf8"));
+  let changed = body.model !== model;
+  body.model = ANTIGRAVITY_MODEL_ALIASES[model] || model;
+  changed = changed || body.model !== model;
 
-  let body;
-  try {
-    body = JSON.parse(bodyBuffer.toString("utf8"));
-  } catch {
-    return bodyBuffer;
-  }
-
-  let changed = false;
-  const alias = ANTIGRAVITY_MODEL_ALIASES[body?.model];
-  if (alias) {
-    body.model = alias;
-    changed = true;
-  }
-
-  if (isClaudeModel(body?.model)) {
+  if (isClaudeModel(body.model)) {
     const visibleThinking = ["enabled", "adaptive", "auto"].includes(body.thinking?.type);
     rewriteAnthropicBeta(headers, visibleThinking);
     changed = sanitizeThinkingBlocks(body) || changed;
   }
-  return changed ? Buffer.from(JSON.stringify(body), "utf8") : bodyBuffer;
+  return changed ? Buffer.from(JSON.stringify(body), "utf8") : raw;
 }
 
-function createFrontProxy({ targetHost, targetPort, log }) {
+function sendUpstream({ targetHost, targetPort }, req, headers, body) {
+  return new Promise((resolve, reject) => {
+    const upstream = http.request({
+      host: targetHost,
+      port: targetPort,
+      method: req.method,
+      path: req.url,
+      headers: { ...headers, "content-length": String(body.length), host: `${targetHost}:${targetPort}` }
+    }, resolve);
+    upstream.on("error", reject);
+    upstream.end(body);
+  });
+}
+
+function createFrontProxy({ targetHost, targetPort, log, router = null }) {
+  const target = { targetHost, targetPort };
+  const failUpstream = (res, error) => {
+    log(`Proxy upstream error: ${error.message}`);
+    if (!res.headersSent) res.writeHead(502, { "content-type": "application/json" });
+    res.end(JSON.stringify({ error: { message: `DroidProxy could not reach cli-proxy-api: ${error.message}` } }));
+  };
+
   return http.createServer((req, res) => {
     const chunks = [];
     req.on("data", (chunk) => chunks.push(chunk));
-    req.on("end", () => {
-      const headers = { ...req.headers };
-      for (const name of HOP_BY_HOP) delete headers[name];
+    req.on("end", async () => {
+      const raw = Buffer.concat(chunks);
+      const baseHeaders = { ...req.headers };
+      for (const name of HOP_BY_HOP) delete baseHeaders[name];
 
-      const body = req.method === "POST" ? prepareRequest(headers, Buffer.concat(chunks)) : Buffer.concat(chunks);
-      headers["content-length"] = String(body.length);
-      headers.host = `${targetHost}:${targetPort}`;
+      let parsed = null;
+      if (req.method === "POST" && raw.length) {
+        try {
+          parsed = JSON.parse(raw.toString("utf8"));
+        } catch {
+          parsed = null;
+        }
+      }
 
-      const upstream = http.request({ host: targetHost, port: targetPort, method: req.method, path: req.url, headers }, (upstreamRes) => {
+      // Not a model request (or not JSON): forward as-is.
+      if (typeof parsed?.model !== "string") {
+        try {
+          const upstreamRes = await sendUpstream(target, req, baseHeaders, raw);
+          res.writeHead(upstreamRes.statusCode || 502, upstreamRes.headers);
+          upstreamRes.pipe(res);
+          res.on("close", () => upstreamRes.destroy());
+        } catch (error) {
+          failUpstream(res, error);
+        }
+        return;
+      }
+
+      let primary = parsed.model;
+      if (router && primary === AUTO_MODEL_ID) {
+        primary = (await router.resolveAuto(baseHeaders, parsed)).model;
+      }
+      const candidates = router ? router.candidatesFor(primary) : [primary];
+
+      for (let index = 0; index < candidates.length; index += 1) {
+        const model = candidates[index];
+        const headers = { ...baseHeaders };
+        let upstreamRes;
+        try {
+          upstreamRes = await sendUpstream(target, req, headers, prepareBody(headers, raw, model));
+        } catch (error) {
+          failUpstream(res, error);
+          return;
+        }
+
+        const exhausted = router && FALLBACK_STATUSES.has(upstreamRes.statusCode);
+        if (exhausted) {
+          const until = router.markExhausted(model, upstreamRes.headers["retry-after"]);
+          const next = candidates[index + 1];
+          if (next && !res.destroyed) {
+            upstreamRes.resume();
+            router.reportFallback(model, next, until);
+            continue;
+          }
+        }
+
         res.writeHead(upstreamRes.statusCode || 502, upstreamRes.headers);
         upstreamRes.pipe(res);
-      });
-      upstream.on("error", (error) => {
-        log(`Proxy upstream error: ${error.message}`);
-        if (!res.headersSent) res.writeHead(502, { "content-type": "application/json" });
-        res.end(JSON.stringify({ error: { message: `DroidProxy could not reach cli-proxy-api: ${error.message}` } }));
-      });
-      res.on("close", () => upstream.destroy());
-      upstream.end(body);
+        res.on("close", () => upstreamRes.destroy());
+        return;
+      }
     });
   });
 }
 
-module.exports = { createFrontProxy, sanitizeThinkingBlocks, rewriteAnthropicBeta };
+module.exports = { createFrontProxy, sanitizeThinkingBlocks, rewriteAnthropicBeta, prepareBody };

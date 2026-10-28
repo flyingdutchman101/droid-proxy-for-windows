@@ -1,15 +1,22 @@
 # Droid Proxy for Windows
 
-Electron-based Windows app that runs the bundled [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) backend (`cli-proxy-api.exe`) so [Factory](https://app.factory.ai) Droids can use your own Codex, Claude, and Gemini subscriptions as custom models.
+Electron-based Windows app that runs the bundled [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) backend (`cli-proxy-api.exe`) so [Factory](https://app.factory.ai) Droids can use your own Codex, Claude, Gemini, and Kimi subscriptions, plus pay-per-token API keys, as custom models.
 
 ## Features
 
-- One-click OAuth login for Codex, Claude, and Gemini (via Google Antigravity).
+- One-click OAuth login for Codex, Claude, Gemini (via Google Antigravity), and Kimi Code. Each connected account is listed under its provider as **Authorized**.
+- API keys for DeepSeek, Kimi API (Moonshot), GLM (Z.ai), Qwen (Alibaba Model Studio), MiniMax, Mistral (EU endpoint available), and OpenRouter. Keys are encrypted with Windows DPAPI; their models get a provider prefix (for example `deepseek/deepseek-v4-pro`). China-hosted endpoints process your code in China.
+- **Auto routing:** pick **DroidProxy: Auto** in Factory. A fast model (Haiku 5.5, then Gemini 3.8 Flash, then GPT 6 Luna) classifies the first message of each session as coding, legal, business, writing, research, math, or quick, and the session stays on the model chosen for that category. Defaults come from independent leaderboards (Vals AI, Arena) and are editable in the app.
+- **Backup models:** when a model returns 429/503/529 before any output, the same request is retried on the next model in its backup list, across providers, and the exhausted model is skipped until it cools down (Retry-After, or 10 minutes). A tray notification says which model took over.
 - Usage limits per connected account: Codex and Claude 5-hour/weekly windows, Gemini quota groups.
 - Applies DroidProxy custom models to `~/.factory/settings.json` (a timestamped backup is written first):
-  - GPT 6 Astra, GPT 6.1 Sol, GPT 6 Luna
+  - Auto
+  - GPT 6 Astra, GPT 6.1 Sol, GPT 6.1 Terra, GPT 6 Luna
   - Claude Fable 5.1, Opus 5.5, Sonnet 5.5, Haiku 5.5
   - Gemini 3.8 Flash (High), Gemini 4 Argon (High)
+  - Claude Opus 5.5 (High) and Sonnet 5.5 (High) via Google, billed to Google AI Pro/Ultra
+  - Kimi K3, Kimi K2.6 (Kimi Code)
+  - Models for every API-key provider you configure
 - Starts the proxy automatically when the app opens.
 - Closing the window hides it to the system tray and keeps the proxy running. Use the tray icon to reopen the window or **Quit**. Launching the exe again reopens the running instance instead of starting a second one.
 - Logs are also written to `%USERPROFILE%\.cli-proxy-api\droidproxy-windows.log`.

@@ -7,7 +7,6 @@ const elements = {
   endpoint: document.querySelector("#endpoint-code"),
   copyEndpoint: document.querySelector("#copy-endpoint-btn"),
   debug: document.querySelector("#debug-input"),
-  accounts: document.querySelector("#accounts-list"),
   usage: document.querySelector("#usage-list"),
   logs: document.querySelector("#log-output"),
   factoryStatus: document.querySelector("#factory-status"),
@@ -56,21 +55,115 @@ function renderLogs(logs) {
   elements.logs.scrollTop = elements.logs.scrollHeight;
 }
 
+// Each connected account is listed under its provider. An expired access token
+// is still authorized: the backend refreshes it on the next request.
 function renderAccounts(accounts) {
   currentAccounts = accounts;
-  if (!accounts.length) {
-    elements.accounts.className = "list muted";
-    elements.accounts.textContent = "No account connected.";
-    return;
-  }
+  document.querySelectorAll(".provider[data-provider]").forEach((row) => {
+    const mine = accounts.filter((account) => account.provider === row.dataset.provider);
+    const container = row.querySelector(".provider-accounts");
+    if (!container) return;
+    row.classList.toggle("connected", mine.some((account) => !account.disabled));
+    const button = row.querySelector(".login-btn");
+    if (button) button.textContent = mine.length ? "Add account" : "Connect";
+    container.innerHTML = mine.length
+      ? mine.map((account) => `
+        <div class="authorized ${account.disabled ? "off" : ""}">
+          <span class="auth-badge">${account.disabled ? "Disabled" : "Authorized"}</span>
+          <span class="auth-email">${escapeHtml(account.email)}</span>
+        </div>`).join("")
+      : `<div class="authorized none">Not connected</div>`;
+  });
+}
 
-  elements.accounts.className = "list";
-  elements.accounts.innerHTML = accounts.map((account) => `
-    <div class="account">
-      <strong>${escapeHtml(account.providerLabel)} · ${escapeHtml(account.email)}</strong>
-      <span>${account.disabled ? "Disabled" : account.isExpired ? "Expired" : "Ready"} · ${escapeHtml(account.id)}</span>
-    </div>
-  `).join("");
+let routing = null;
+
+function modelSelect(id, selected, includeNone) {
+  const options = (routing?.models || []).map((model) =>
+    `<option value="${escapeHtml(model.id)}" ${model.id === selected ? "selected" : ""}>${escapeHtml(model.label)}</option>`).join("");
+  return `<select id="${escapeHtml(id)}">${includeNone ? `<option value="">(none)</option>` : ""}${options}</select>`;
+}
+
+const labelFor = (modelId) => routing?.models.find((model) => model.id === modelId)?.label || modelId;
+
+function renderRouting(state) {
+  routing = state;
+  document.querySelector("#auto-enabled").checked = state.autoEnabled;
+  document.querySelector("#fallback-enabled").checked = state.fallbackEnabled;
+
+  document.querySelector("#category-list").innerHTML = state.categories.map((category) => `
+    <div class="routing-row" title="${escapeHtml(category.description)}">
+      <span class="routing-label">${escapeHtml(category.key[0].toUpperCase() + category.key.slice(1))}</span>
+      ${modelSelect(`cat-${category.key}`, state.categoryModels[category.key], false)}
+    </div>`).join("");
+
+  document.querySelector("#chain-list").innerHTML = state.models.map((model) => {
+    const chain = state.fallbackChains[model.id] || [];
+    const selects = [0, 1, 2].map((slot) => modelSelect(`chain-${model.id}-${slot}`, chain[slot] || "", true)).join("");
+    return `
+      <div class="routing-row chain" data-model="${escapeHtml(model.id)}">
+        <span class="routing-label">${escapeHtml(model.label)}</span>
+        <div class="chain-selects">${selects}</div>
+      </div>`;
+  }).join("");
+
+  renderCooling(state);
+}
+
+function renderCooling(state) {
+  const cooling = document.querySelector("#cooling-list");
+  cooling.innerHTML = state.cooling.length
+    ? state.cooling.map((item) => `<div class="cooling">${escapeHtml(labelFor(item.model))}: out of quota, skipped until ${new Date(item.until).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</div>`).join("")
+    : "";
+}
+
+function collectRouting() {
+  const categoryModels = Object.fromEntries(routing.categories.map((category) =>
+    [category.key, document.querySelector(`#cat-${CSS.escape(category.key)}`).value]));
+  const fallbackChains = {};
+  document.querySelectorAll(".routing-row.chain").forEach((row) => {
+    const chain = [...row.querySelectorAll("select")].map((select) => select.value).filter(Boolean);
+    fallbackChains[row.dataset.model] = [...new Set(chain)].filter((item) => item !== row.dataset.model);
+  });
+  return {
+    autoEnabled: document.querySelector("#auto-enabled").checked,
+    fallbackEnabled: document.querySelector("#fallback-enabled").checked,
+    categoryModels,
+    fallbackChains
+  };
+}
+
+async function refreshRouting() {
+  renderRouting(await api.routing());
+}
+
+function renderApiProviders(providers) {
+  document.querySelector("#api-provider-list").innerHTML = providers.map((provider) => {
+    const regions = provider.regions.map((region) =>
+      `<option value="${escapeHtml(region.key)}" ${region.key === provider.region ? "selected" : ""}>${escapeHtml(region.label)} · ${escapeHtml(region.residency)}</option>`).join("");
+    return `
+      <div class="provider api" data-api="${escapeHtml(provider.key)}">
+        <div class="provider-head">
+          <span class="provider-logo monogram">${escapeHtml(provider.label[0])}</span>
+          <span class="provider-name">${escapeHtml(provider.label)} <small>${escapeHtml(provider.models.join(", "))}</small></span>
+        </div>
+        <div class="api-controls">
+          <select class="api-region">${regions}</select>
+          <input class="api-key" type="password" placeholder="${provider.configured ? "Key saved (enter a new one to replace)" : "API key"}" autocomplete="off" spellcheck="false" />
+          <button class="primary small api-save">Save</button>
+          ${provider.configured ? `<button class="small api-clear">Remove</button>` : ""}
+        </div>
+        <div class="provider-accounts">
+          ${provider.configured
+            ? `<div class="authorized"><span class="auth-badge">Authorized</span><span class="auth-email">API key saved</span></div>`
+            : `<div class="authorized none">No key</div>`}
+        </div>
+      </div>`;
+  }).join("");
+}
+
+async function refreshApiProviders() {
+  renderApiProviders(await api.apiProviders());
 }
 
 function renderUsage(results) {
@@ -174,7 +267,7 @@ elements.copyEndpoint.addEventListener("click", async () => {
 
 document.querySelectorAll(".login-btn").forEach((button) => {
   button.addEventListener("click", async () => {
-    const label = button.closest(".section-row").querySelector(".section-label span").textContent;
+    const label = button.closest(".provider").querySelector(".provider-name").firstChild.textContent.trim();
     try {
       await api.login(button.dataset.provider);
       showToast(`Browser opened for ${label} login. Complete the sign-in, then refresh accounts.`);
@@ -203,7 +296,55 @@ document.querySelector("#clear-log-btn").addEventListener("click", () => {
   elements.logs.textContent = "";
 });
 
-api.onProxyState(renderProxyState);
+async function saveRouting(message) {
+  try {
+    renderRouting(await api.saveRouting(collectRouting()));
+    renderFactoryStatus(await api.factoryStatus());
+    showToast(message);
+  } catch (error) {
+    showToast(cleanIpcError(error));
+  }
+}
+
+document.querySelector("#save-routing-btn").addEventListener("click", () => saveRouting("Routing saved."));
+document.querySelector("#auto-enabled").addEventListener("change", () =>
+  saveRouting("Auto routing updated. Click Apply so Factory shows or hides DroidProxy: Auto."));
+document.querySelector("#fallback-enabled").addEventListener("change", () => saveRouting("Backup models updated."));
+document.querySelector("#reset-chains-btn").addEventListener("click", async () => {
+  routing.fallbackChains = { ...routing.defaults.fallbackChains };
+  routing.categoryModels = { ...routing.defaults.categoryModels };
+  renderRouting(routing);
+  await saveRouting("Routing reset to defaults.");
+});
+
+document.querySelector("#api-provider-list").addEventListener("click", async (event) => {
+  const row = event.target.closest(".provider.api");
+  if (!row) return;
+  const provider = row.dataset.api;
+  try {
+    if (event.target.classList.contains("api-save")) {
+      const apiKey = row.querySelector(".api-key").value;
+      const region = row.querySelector(".api-region").value;
+      renderApiProviders(await api.setApiKey({ provider, apiKey, region }));
+      showToast("API key saved. Click Apply to add its models to Factory.");
+    } else if (event.target.classList.contains("api-clear")) {
+      renderApiProviders(await api.clearApiKey(provider));
+      showToast("API key removed. Click Apply to remove its models from Factory.");
+    } else {
+      return;
+    }
+    await refreshRouting();
+    renderFactoryStatus(await api.factoryStatus());
+  } catch (error) {
+    showToast(cleanIpcError(error));
+  }
+});
+
+// Only the cool-down list is refreshed here, so unsaved routing edits survive.
+api.onProxyState((state) => {
+  renderProxyState(state);
+  if (routing) api.routing().then(renderCooling).catch(() => {});
+});
 api.onLogs(renderLogs);
 api.onAccountsChanged(() => refreshAccounts().then(refreshUsage));
 
@@ -213,6 +354,7 @@ async function boot() {
   renderLogs(await api.getLogs());
   renderFactoryStatus(await api.factoryStatus());
   await refreshAccounts();
+  await Promise.all([refreshRouting(), refreshApiProviders()]);
   await refreshUsage();
 }
 

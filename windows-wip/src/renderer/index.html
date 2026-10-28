@@ -30,52 +30,57 @@
         </div>
       </section>
 
-      <section class="section-row">
-        <div class="section-label">
-          <span>Codex OAuth</span>
-        </div>
-        <div class="section-control">
-          <button class="primary small login-btn" data-provider="codex">Connect</button>
-        </div>
-      </section>
-
-      <section class="section-row">
-        <div class="section-label">
-          <span>Claude OAuth</span>
-        </div>
-        <div class="section-control">
-          <button class="primary small login-btn" data-provider="claude">Connect</button>
-        </div>
-      </section>
-
-      <section class="section-row">
-        <div class="section-label">
-          <span>Gemini OAuth (Antigravity)</span>
-        </div>
-        <div class="section-control">
-          <button class="primary small login-btn" data-provider="antigravity">Connect</button>
-        </div>
-      </section>
-
-      <section class="section-row">
-        <div class="section-label">
-          <span>Kimi OAuth (Kimi Code)</span>
-        </div>
-        <div class="section-control">
-          <button class="primary small login-btn" data-provider="kimi">Connect</button>
-        </div>
-      </section>
-
       <section class="section-card">
         <div class="card-title">
-          <span>Connected accounts</span>
+          <span>Subscriptions</span>
           <button id="refresh-accounts-btn" class="icon-only" title="Refresh accounts">
             <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
               <path fill="currentColor" d="M17.65 6.35A7.95 7.95 0 0 0 12 4a8 8 0 1 0 8 8h-2a6 6 0 1 1-6-6c1.66 0 3.14.69 4.22 1.79L13 11h7V4l-2.35 2.35z"/>
             </svg>
           </button>
         </div>
-        <div id="accounts-list" class="list muted">No account connected.</div>
+        <div class="provider-list">
+          <div class="provider" data-provider="codex">
+            <div class="provider-head">
+              <img class="provider-logo" src="icons/codex.png" alt="" />
+              <span class="provider-name">Codex <small>ChatGPT</small></span>
+              <button class="primary small login-btn" data-provider="codex">Connect</button>
+            </div>
+            <div class="provider-accounts"></div>
+          </div>
+          <div class="provider" data-provider="claude">
+            <div class="provider-head">
+              <img class="provider-logo" src="icons/claude.png" alt="" />
+              <span class="provider-name">Claude <small>Claude Pro/Max</small></span>
+              <button class="primary small login-btn" data-provider="claude">Connect</button>
+            </div>
+            <div class="provider-accounts"></div>
+          </div>
+          <div class="provider" data-provider="antigravity">
+            <div class="provider-head">
+              <img class="provider-logo" src="icons/gemini.png" alt="" />
+              <span class="provider-name">Gemini <small>Google AI Pro/Ultra via Antigravity</small></span>
+              <button class="primary small login-btn" data-provider="antigravity">Connect</button>
+            </div>
+            <div class="provider-accounts"></div>
+          </div>
+          <div class="provider" data-provider="kimi">
+            <div class="provider-head">
+              <img class="provider-logo" src="icons/kimi.svg" alt="" />
+              <span class="provider-name">Kimi <small>Kimi Code</small></span>
+              <button class="primary small login-btn" data-provider="kimi">Connect</button>
+            </div>
+            <div class="provider-accounts"></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section-card">
+        <div class="card-title">
+          <span>API keys</span>
+        </div>
+        <p class="card-note">Pay-per-token providers. Keys are encrypted with Windows and only used locally. China-hosted endpoints send your code to servers in China.</p>
+        <div id="api-provider-list" class="provider-list"></div>
       </section>
 
       <section class="section-card">
@@ -88,6 +93,29 @@
           </button>
         </div>
         <div id="usage-list" class="list muted">Connect an account to display quota windows.</div>
+      </section>
+
+      <section class="section-card">
+        <div class="card-title">
+          <span>Auto routing</span>
+          <label class="check-row"><input id="auto-enabled" type="checkbox" /> Enabled</label>
+        </div>
+        <p class="card-note">Pick <strong>DroidProxy: Auto</strong> in Factory. The first message of each session is classified by a fast model, and that session then stays on the model chosen for its task type.</p>
+        <div id="category-list" class="routing-list"></div>
+      </section>
+
+      <section class="section-card">
+        <div class="card-title">
+          <span>Backup models</span>
+          <label class="check-row"><input id="fallback-enabled" type="checkbox" /> Enabled</label>
+        </div>
+        <p class="card-note">When a model is out of quota, the same request is retried on the next model in its list, left to right. Exhausted models are skipped until they cool down.</p>
+        <div id="cooling-list" class="cooling-list"></div>
+        <div id="chain-list" class="routing-list"></div>
+        <div class="card-actions">
+          <button id="reset-chains-btn" class="small">Reset to defaults</button>
+          <button id="save-routing-btn" class="primary small">Save routing</button>
+        </div>
       </section>
 
       <section class="section-row">
