@@ -1,0 +1,104 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- VeryCuteDroidProxy app icon: a friendly droid with long wavy hair. -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#242a38"/>
+      <stop offset="1" stop-color="#0b0e11"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.5" cy="0.42" r="0.55">
+      <stop offset="0" stop-color="#f27b2f" stop-opacity="0.55"/>
+      <stop offset="1" stop-color="#f27b2f" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="hair" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffe39a"/>
+      <stop offset="0.55" stop-color="#f0c060"/>
+      <stop offset="1" stop-color="#c98f2e"/>
+    </linearGradient>
+    <linearGradient id="metal" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#c3ccd8"/>
+    </linearGradient>
+    <linearGradient id="visor" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1f2838"/>
+      <stop offset="1" stop-color="#0e131c"/>
+    </linearGradient>
+    <filter id="soft" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="6"/>
+    </filter>
+    <clipPath id="tile">
+      <rect x="16" y="16" width="480" height="480" rx="108"/>
+    </clipPath>
+  </defs>
+
+  <g clip-path="url(#tile)">
+    <rect x="16" y="16" width="480" height="480" fill="url(#bg)"/>
+    <rect x="16" y="16" width="480" height="480" fill="url(#glow)"/>
+
+    <!-- shirt with collar -->
+    <path d="M96 512 C110 430 170 400 256 400 C342 400 402 430 416 512 Z" fill="#f4f6f8"/>
+    <path d="M206 404 L256 452 L232 478 L190 420 Z" fill="#ffffff" stroke="#d5dbe3" stroke-width="4" stroke-linejoin="round"/>
+    <path d="M306 404 L256 452 L280 478 L322 420 Z" fill="#ffffff" stroke="#d5dbe3" stroke-width="4" stroke-linejoin="round"/>
+    <circle cx="256" cy="490" r="6" fill="#d5dbe3"/>
+
+    <!-- hair, back layer: full, wavy volume falling past the shoulders -->
+    <g id="hair-back-left">
+      <path d="M178 126
+               C 112 136, 84 196, 104 246
+               C 76 270, 92 306, 80 334
+               C 66 368, 94 392, 82 424
+               C 76 446, 100 470, 126 466
+               C 116 446, 138 432, 134 410
+               C 160 420, 178 398, 168 372
+               C 192 370, 200 344, 188 322
+               L 196 210 Z"
+            fill="url(#hair)"/>
+      <path d="M118 236 C 100 270, 124 292, 106 326 C 92 352, 118 372, 108 404" fill="none" stroke="#c98f2e" stroke-width="7" stroke-linecap="round" opacity="0.55"/>
+      <path d="M146 300 C 132 330, 156 350, 142 380 C 132 400, 150 418, 140 440" fill="none" stroke="#ffe7a8" stroke-width="6" stroke-linecap="round" opacity="0.7"/>
+    </g>
+    <use href="#hair-back-left" transform="translate(512 0) scale(-1 1)"/>
+
+    <!-- antenna -->
+    <line x1="256" y1="96" x2="256" y2="60" stroke="#c3ccd8" stroke-width="10" stroke-linecap="round"/>
+    <circle cx="256" cy="54" r="20" fill="#f27b2f" filter="url(#soft)" opacity="0.8"/>
+    <circle cx="256" cy="54" r="15" fill="#ff9a5e"/>
+    <circle cx="251" cy="49" r="5" fill="#fff" opacity="0.8"/>
+
+    <!-- head -->
+    <rect x="140" y="104" width="232" height="232" rx="76" fill="url(#metal)"/>
+    <!-- ear bolts with little pearl studs -->
+    <rect x="124" y="196" width="26" height="56" rx="12" fill="#aab4c2"/>
+    <rect x="362" y="196" width="26" height="56" rx="12" fill="#aab4c2"/>
+    <circle cx="137" cy="262" r="7" fill="#fdf6ec" stroke="#d9cdb8" stroke-width="2"/>
+    <circle cx="375" cy="262" r="7" fill="#fdf6ec" stroke="#d9cdb8" stroke-width="2"/>
+
+    <!-- visor face -->
+    <rect x="170" y="168" width="172" height="132" rx="52" fill="url(#visor)"/>
+    <!-- happy eyes -->
+    <path d="M200 226 Q 220 202 240 226" fill="none" stroke="#7ef0ff" stroke-width="11" stroke-linecap="round"/>
+    <path d="M272 226 Q 292 202 312 226" fill="none" stroke="#7ef0ff" stroke-width="11" stroke-linecap="round"/>
+    <!-- big smile -->
+    <path d="M214 254 Q 256 296 298 254" fill="#7ef0ff" opacity="0.95"/>
+    <path d="M226 262 Q 256 282 286 262" fill="#0e131c" opacity="0.35"/>
+    <!-- blush -->
+    <ellipse cx="196" cy="262" rx="14" ry="8" fill="#ff8fa8" opacity="0.7"/>
+    <ellipse cx="316" cy="262" rx="14" ry="8" fill="#ff8fa8" opacity="0.7"/>
+
+    <!-- hair, front layer: crown with a side part and a soft swooping wave -->
+    <path d="M130 238
+             C 112 150, 176 86, 258 88
+             C 340 88, 400 148, 382 238
+             C 374 204, 358 178, 334 158
+             C 318 176, 296 180, 276 172
+             C 252 184, 226 186, 206 176
+             C 182 192, 160 208, 148 242 Z"
+          fill="url(#hair)"/>
+    <path d="M206 176 C 230 136, 286 118, 334 140 C 304 140, 270 150, 246 180 Z" fill="#ffe7a8" opacity="0.85"/>
+    <!-- face-framing wavy strands -->
+    <path d="M148 240 C 132 266, 156 286, 140 312 C 128 334, 150 350, 142 372 C 164 360, 172 336, 162 314 C 176 296, 168 268, 168 250 Z" fill="url(#hair)"/>
+    <path d="M364 240 C 380 266, 356 286, 372 312 C 384 334, 362 350, 370 372 C 348 360, 340 336, 350 314 C 336 296, 344 268, 344 250 Z" fill="url(#hair)"/>
+    <!-- wave texture and shine -->
+    <path d="M168 138 C 196 108, 236 98, 266 100" fill="none" stroke="#fff6d6" stroke-width="8" stroke-linecap="round" opacity="0.8"/>
+    <path d="M150 196 C 160 170, 178 156, 196 150" fill="none" stroke="#c98f2e" stroke-width="6" stroke-linecap="round" opacity="0.45"/>
+    <path d="M362 196 C 354 170, 338 154, 318 146" fill="none" stroke="#c98f2e" stroke-width="6" stroke-linecap="round" opacity="0.45"/>
+  </g>
+</svg>

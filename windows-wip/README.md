@@ -1,4 +1,4 @@
-# Droid Proxy for Windows
+# VeryCuteDroidProxy (Droid Proxy for Windows)
 
 Electron-based Windows app that runs the bundled [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) backend (`cli-proxy-api.exe`) so [Factory](https://app.factory.ai) Droids can use your own Codex, Claude, Gemini, and Kimi subscriptions, plus pay-per-token API keys, as custom models.
 
@@ -7,6 +7,8 @@ Electron-based Windows app that runs the bundled [CLIProxyAPI](https://github.co
 - One-click OAuth login for Codex, Claude, Gemini (via Google Antigravity), and Kimi Code. Each connected account is listed under its provider as **Authorized**.
 - API keys for DeepSeek, Kimi API (Moonshot), GLM (Z.ai), Qwen (Alibaba Model Studio), MiniMax, Mistral (EU endpoint available), and OpenRouter. Keys are encrypted with Windows DPAPI; their models get a provider prefix (for example `deepseek/deepseek-v4-pro`). China-hosted endpoints process your code in China.
 - **Auto routing:** pick **DroidProxy: Auto** in Factory. A fast model (Haiku 5.5, then Gemini 3.8 Flash, then GPT 6 Luna) classifies the first message of each session as coding, legal, business, writing, research, math, or quick, and the session stays on the model chosen for that category. Defaults come from independent leaderboards (Vals AI, Arena) and are editable in the app.
+- **Mission roles:** **Auto · Orchestrator**, **Auto · Worker**, and **Auto · Validator** pick a model per task type and role (strong planner, fast executor, independent reviewer from a different model family), each with its own backup.
+- **Factory modes:** set the model and reasoning effort for normal sessions, spec mode, and each Mission role from the app (`sessionDefaultSettings.model` / `specModeModel`, `missionOrchestratorModel`, `missionModelSettings.workerModel` / `validationWorkerModel`). "Use recommended" fills in the Auto models; broken model IDs are flagged.
 - **Backup models:** when a model returns 429/503/529 before any output, the same request is retried on the next model in its backup list, across providers, and the exhausted model is skipped until it cools down (Retry-After, or 10 minutes). A tray notification says which model took over.
 - Usage limits per connected account: Codex and Claude 5-hour/weekly windows, Gemini quota groups.
 - Applies DroidProxy custom models to `~/.factory/settings.json` (a timestamped backup is written first):
@@ -37,7 +39,7 @@ npm install
 npm run build:win
 ```
 
-The app is written to `windows-wip/dist/DroidProxy Windows <version>.exe`. It is portable: run it from anywhere. Windows SmartScreen may warn on first launch because the exe is not signed with a trusted certificate.
+The app is written to `windows-wip/dist/VeryCuteDroidProxy <version>.exe`. It is portable: run it from anywhere. Windows SmartScreen may warn on first launch because the exe is not signed with a trusted certificate.
 
 ## Usage
 
@@ -53,6 +55,7 @@ Credentials are stored by CLIProxyAPI in `%USERPROFILE%\.cli-proxy-api`.
 npm install
 npm start
 npm run check
+npm run icon   # re-render resources/icon.png and icon.ico from resources/icon.svg
 ```
 
 ## Updating the backend

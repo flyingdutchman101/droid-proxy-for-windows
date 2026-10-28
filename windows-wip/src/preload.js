@@ -16,6 +16,8 @@ contextBridge.exposeInMainWorld("droidProxy", {
   openFactoryFolder: () => ipcRenderer.invoke("paths:openFactory"),
   routing: () => ipcRenderer.invoke("routing:get"),
   saveRouting: (routing) => ipcRenderer.invoke("routing:save", routing),
+  factoryModes: () => ipcRenderer.invoke("modes:get"),
+  applyFactoryModes: (choices) => ipcRenderer.invoke("modes:apply", choices),
   apiProviders: () => ipcRenderer.invoke("apikeys:list"),
   setApiKey: (entry) => ipcRenderer.invoke("apikeys:set", entry),
   clearApiKey: (provider) => ipcRenderer.invoke("apikeys:clear", provider),

@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>DroidProxy Windows</title>
+    <title>VeryCuteDroidProxy</title>
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
@@ -13,8 +13,8 @@
           <img src="../../resources/icon.png" alt="DroidProxy" width="42" height="42" />
         </div>
         <div class="brand-text">
-          <h1>DroidProxy</h1>
-          <p>Windows bridge</p>
+          <h1>VeryCuteDroidProxy</h1>
+          <p>Your subscriptions, one cute droid</p>
         </div>
       </header>
 
@@ -100,8 +100,20 @@
           <span>Auto routing</span>
           <label class="check-row"><input id="auto-enabled" type="checkbox" /> Enabled</label>
         </div>
-        <p class="card-note">Pick <strong>DroidProxy: Auto</strong> in Factory. The first message of each session is classified by a fast model, and that session then stays on the model chosen for its task type.</p>
+        <p class="card-note">Pick <strong>Auto</strong> in Factory for normal sessions, or the <strong>Auto · Orchestrator / Worker / Validator</strong> models for Mission roles. The first message of each session is classified by a fast model, and that session then stays on the model chosen for its task type and role. Each role has its own backup.</p>
         <div id="category-list" class="routing-list"></div>
+      </section>
+
+      <section class="section-card">
+        <div class="card-title">
+          <span>Factory modes</span>
+        </div>
+        <p class="card-note">Which model Factory uses for normal sessions, spec mode, and each Mission role. Applying writes Factory's settings (a backup is saved first). "Factory default" lets Factory inherit the session model.</p>
+        <div id="mode-list" class="routing-list"></div>
+        <div class="card-actions">
+          <button id="recommended-modes-btn" class="small">Use recommended</button>
+          <button id="apply-modes-btn" class="primary small">Apply to Factory</button>
+        </div>
       </section>
 
       <section class="section-card">

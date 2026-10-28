@@ -1,5 +1,5 @@
 const http = require("http");
-const { AUTO_MODEL_ID, FALLBACK_STATUSES } = require("./router");
+const { isAutoModel, FALLBACK_STATUSES } = require("./router");
 
 // Front proxy that sits between Factory and cli-proxy-api, mirroring the Claude
 // request fixes the macOS ThinkingProxy applies:
@@ -162,10 +162,13 @@ function createFrontProxy({ targetHost, targetPort, log, router = null }) {
       }
 
       let primary = parsed.model;
-      if (router && primary === AUTO_MODEL_ID) {
-        primary = (await router.resolveAuto(baseHeaders, parsed)).model;
+      let roleBackups = [];
+      if (router && isAutoModel(primary)) {
+        const choice = await router.resolveAuto(baseHeaders, parsed, primary);
+        primary = choice.model;
+        roleBackups = choice.backups;
       }
-      const candidates = router ? router.candidatesFor(primary) : [primary];
+      const candidates = router ? router.candidatesFor(primary, roleBackups) : [primary];
 
       for (let index = 0; index < candidates.length; index += 1) {
         const model = candidates[index];

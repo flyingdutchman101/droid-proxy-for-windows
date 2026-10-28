@@ -6,6 +6,9 @@ const { spawn, execFile } = require("child_process");
 const { createFrontProxy } = require("./proxy");
 const {
   AUTO_MODEL_ID,
+  AUTO_ROLE_IDS,
+  ROLES,
+  DEFAULT_ROLE_MODELS,
   CATEGORIES,
   DEFAULT_CATEGORY_MODELS,
   DEFAULT_CHAINS,
@@ -14,8 +17,13 @@ const {
 } = require("./router");
 const { API_PROVIDERS, apiModelId, providerRegion, apiKeysYaml } = require("./providers");
 
-const APP_NAME = "DroidProxy Windows";
+const APP_NAME = "VeryCuteDroidProxy";
 const APP_USER_MODEL_ID = "io.automaze.droidproxy.windows";
+
+// Keep the pre-rename data folder: it holds the single-instance lock and the
+// runtime copy of the backend, so builds before and after the rename still see
+// each other instead of fighting over the port.
+app.setPath("userData", path.join(app.getPath("appData"), "droidproxy-windows"));
 const AUTH_DIR = path.join(os.homedir(), ".cli-proxy-api");
 const SETTINGS_PATH = path.join(AUTH_DIR, "droidproxy-windows.json");
 const CONFIG_PATH = path.join(AUTH_DIR, "droidproxy-windows-config.yaml");
@@ -34,6 +42,8 @@ const DEFAULT_SETTINGS = {
   reasoningEffort: "medium",
   autoEnabled: true,
   categoryModels: DEFAULT_CATEGORY_MODELS,
+  // { [category]: { orchestrator|worker|validator: { model, backup } } }
+  roleModels: DEFAULT_ROLE_MODELS,
   classifierModels: DEFAULT_CLASSIFIER_MODELS,
   fallbackEnabled: true,
   fallbackChains: DEFAULT_CHAINS,
@@ -226,6 +236,13 @@ function sanitizeSettings(value) {
       const chosen = value.categoryModels?.[category];
       return [category, typeof chosen === "string" && chosen ? chosen : DEFAULT_CATEGORY_MODELS[category]];
     })),
+    roleModels: Object.fromEntries(Object.keys(CATEGORIES).map((category) => [category, Object.fromEntries(ROLES.map((roleName) => {
+      const fallback = DEFAULT_ROLE_MODELS[category][roleName];
+      const chosen = value.roleModels?.[category]?.[roleName] || {};
+      const model = typeof chosen.model === "string" && chosen.model ? chosen.model : fallback.model;
+      const backup = typeof chosen.backup === "string" ? chosen.backup : fallback.backup;
+      return [roleName, { model, backup: backup === model ? "" : backup }];
+    }))])),
     classifierModels: stringList(value.classifierModels, DEFAULT_CLASSIFIER_MODELS),
     fallbackEnabled: value.fallbackEnabled !== false,
     fallbackChains: Object.fromEntries(Object.entries(value.fallbackChains || DEFAULT_CHAINS)
@@ -282,15 +299,32 @@ function apiFactoryModels() {
 
 // Factory sends Auto requests in Anthropic format; CLIProxyAPI translates them
 // for whichever provider's model the router picks.
-const AUTO_FACTORY_MODEL = {
-  model: AUTO_MODEL_ID,
-  displayName: "DroidProxy: Auto (best model per task)",
+const autoFactoryModel = (model, displayName) => ({
+  model,
+  displayName,
   providerKey: "auto",
   provider: "anthropic",
   maxOutputTokens: 128000,
   supportedReasoningEfforts: ALL_EFFORTS,
   defaultReasoningEffort: "high"
-};
+});
+const ROLE_LABELS = { orchestrator: "Orchestrator", worker: "Worker", validator: "Validator" };
+const AUTO_FACTORY_MODELS = [
+  autoFactoryModel(AUTO_MODEL_ID, "DroidProxy: Auto (best model per task)"),
+  ...Object.entries(AUTO_ROLE_IDS).map(([model, roleName]) => autoFactoryModel(model, `DroidProxy: Auto · ${ROLE_LABELS[roleName]}`))
+];
+
+const factoryModelId = (model) => `custom:droidproxy:${model.replaceAll("/", "-")}`;
+
+// Where Factory keeps the model for each mode, with its reasoning-effort key.
+// Spec mode plans, so it defaults to the orchestrator role.
+const FACTORY_MODE_SLOTS = [
+  { key: "normal", label: "Normal sessions", model: ["sessionDefaultSettings", "model"], effort: ["sessionDefaultSettings", "reasoningEffort"], recommended: AUTO_MODEL_ID },
+  { key: "spec", label: "Spec mode", model: ["sessionDefaultSettings", "specModeModel"], effort: ["sessionDefaultSettings", "specModeReasoningEffort"], recommended: `${AUTO_MODEL_ID}-orchestrator` },
+  { key: "orchestrator", label: "Mission orchestrator", model: ["missionOrchestratorModel"], effort: ["missionOrchestratorReasoningEffort"], recommended: `${AUTO_MODEL_ID}-orchestrator` },
+  { key: "worker", label: "Mission worker", model: ["missionModelSettings", "workerModel"], effort: ["missionModelSettings", "workerReasoningEffort"], recommended: `${AUTO_MODEL_ID}-worker` },
+  { key: "validator", label: "Mission validator", model: ["missionModelSettings", "validationWorkerModel"], effort: ["missionModelSettings", "validationWorkerReasoningEffort"], recommended: `${AUTO_MODEL_ID}-validator` }
+];
 
 function allModelDefinitions() {
   return [...FACTORY_MODELS, ...apiFactoryModels()];
@@ -440,6 +474,7 @@ function getRouter() {
       fallbackEnabled: settings.fallbackEnabled,
       fallbackChains: settings.fallbackChains,
       categoryModels: settings.categoryModels,
+      roleModels: settings.roleModels,
       classifierModels: settings.classifierModels
     }),
     onFallback: (from, to, until) => {
@@ -807,11 +842,11 @@ function formatReset(date) {
 
 function factoryModels() {
   const origin = `http://${settings.host}:${settings.port}`;
-  const definitions = [...(settings.autoEnabled ? [AUTO_FACTORY_MODEL] : []), ...allModelDefinitions()];
+  const definitions = [...(settings.autoEnabled ? AUTO_FACTORY_MODELS : []), ...allModelDefinitions()];
   return definitions.map((modelDefinition, index) => {
     const entry = {
       model: modelDefinition.model,
-      id: `custom:droidproxy:${modelDefinition.model.replaceAll("/", "-")}`,
+      id: factoryModelId(modelDefinition.model),
       index,
       // Anthropic clients append /v1/messages themselves.
       baseUrl: modelDefinition.provider === "anthropic" ? origin : `${origin}/v1`,
@@ -1003,11 +1038,79 @@ function routingState() {
     fallbackEnabled: settings.fallbackEnabled,
     categories: Object.entries(CATEGORIES).map(([key, description]) => ({ key, description })),
     categoryModels: settings.categoryModels,
+    roles: ROLES.map((key) => ({ key, label: ROLE_LABELS[key] })),
+    roleModels: settings.roleModels,
     fallbackChains: settings.fallbackChains,
-    defaults: { categoryModels: DEFAULT_CATEGORY_MODELS, fallbackChains: DEFAULT_CHAINS },
+    defaults: { categoryModels: DEFAULT_CATEGORY_MODELS, roleModels: DEFAULT_ROLE_MODELS, fallbackChains: DEFAULT_CHAINS },
     models: modelOptions(),
     cooling
   };
+}
+
+const getPath = (object, keys) => keys.reduce((value, key) => (value && typeof value === "object" ? value[key] : undefined), object);
+function setPath(object, keys, value) {
+  let target = object;
+  for (const key of keys.slice(0, -1)) {
+    if (!target[key] || typeof target[key] !== "object") target[key] = {};
+    target = target[key];
+  }
+  const last = keys[keys.length - 1];
+  if (value === undefined) delete target[last];
+  else target[last] = value;
+}
+
+function readFactorySettings() {
+  try {
+    return JSON.parse(fs.readFileSync(FACTORY_SETTINGS_PATH, "utf8"));
+  } catch {
+    return {};
+  }
+}
+
+// Current model per Factory mode. A DroidProxy ID that no longer exists (for
+// example a renamed model) is flagged so the UI can offer a fix.
+function factoryModesState() {
+  const factorySettings = readFactorySettings();
+  const known = new Map([...AUTO_FACTORY_MODELS, ...allModelDefinitions()].map((item) => [factoryModelId(item.model), item.model]));
+  return {
+    slots: FACTORY_MODE_SLOTS.map((slot) => {
+      const current = getPath(factorySettings, slot.model);
+      const isDroidProxy = typeof current === "string" && DROIDPROXY_MODEL_PREFIXES.some((prefix) => current.startsWith(prefix));
+      return {
+        key: slot.key,
+        label: slot.label,
+        recommended: slot.recommended,
+        current: current || "",
+        model: known.get(current) || "",
+        missing: isDroidProxy && !known.has(current),
+        external: Boolean(current) && !isDroidProxy,
+        effort: getPath(factorySettings, slot.effort) || ""
+      };
+    }),
+    models: [
+      ...AUTO_FACTORY_MODELS.map((item) => ({ id: item.model, label: item.displayName.replace(/^DroidProxy: /, "") })),
+      ...modelOptions()
+    ],
+    efforts: ALL_EFFORTS
+  };
+}
+
+// `choices`: { [slotKey]: { model, effort } }; an empty model clears the key so
+// Factory falls back to its default (inherit).
+function applyFactoryModes(choices) {
+  const usesAuto = Object.values(choices || {}).some((choice) => AUTO_FACTORY_MODELS.some((item) => item.model === choice?.model));
+  if (usesAuto && !settings.autoEnabled) saveSettings({ autoEnabled: true });
+  applyFactoryModels(); // backs up settings.json and makes sure the IDs exist
+  const factorySettings = readFactorySettings();
+  for (const slot of FACTORY_MODE_SLOTS) {
+    const choice = choices?.[slot.key];
+    if (!choice) continue;
+    setPath(factorySettings, slot.model, choice.model ? factoryModelId(choice.model) : undefined);
+    if (choice.effort !== undefined) setPath(factorySettings, slot.effort, choice.effort || undefined);
+  }
+  fs.writeFileSync(FACTORY_SETTINGS_PATH, JSON.stringify(factorySettings, null, 2).replaceAll("\\/", "/"));
+  log(`Factory modes updated: ${Object.entries(choices || {}).map(([key, value]) => `${key}=${value.model || "default"}`).join(", ")}`);
+  return factoryModesState();
 }
 
 function apiProviderState() {
@@ -1030,10 +1133,13 @@ ipcMain.handle("routing:save", (_event, next) => {
     autoEnabled: next.autoEnabled,
     fallbackEnabled: next.fallbackEnabled,
     categoryModels: next.categoryModels,
+    roleModels: next.roleModels,
     fallbackChains: next.fallbackChains
   });
   return routingState();
 });
+ipcMain.handle("modes:get", () => factoryModesState());
+ipcMain.handle("modes:apply", (_event, choices) => applyFactoryModes(choices));
 ipcMain.handle("apikeys:list", () => apiProviderState());
 ipcMain.handle("apikeys:set", (_event, { provider, apiKey, region }) => {
   if (!API_PROVIDERS[provider]) throw new Error("Unknown provider");

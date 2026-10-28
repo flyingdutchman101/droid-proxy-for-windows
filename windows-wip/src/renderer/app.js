@@ -91,11 +91,28 @@ function renderRouting(state) {
   document.querySelector("#auto-enabled").checked = state.autoEnabled;
   document.querySelector("#fallback-enabled").checked = state.fallbackEnabled;
 
-  document.querySelector("#category-list").innerHTML = state.categories.map((category) => `
-    <div class="routing-row" title="${escapeHtml(category.description)}">
-      <span class="routing-label">${escapeHtml(category.key[0].toUpperCase() + category.key.slice(1))}</span>
-      ${modelSelect(`cat-${category.key}`, state.categoryModels[category.key], false)}
-    </div>`).join("");
+  document.querySelector("#category-list").innerHTML = state.categories.map((category) => {
+    const roles = state.roles.map((roleItem) => {
+      const cell = state.roleModels?.[category.key]?.[roleItem.key] || {};
+      return `
+        <div class="role-row" data-category="${escapeHtml(category.key)}" data-role="${escapeHtml(roleItem.key)}">
+          <span class="role-label">${escapeHtml(roleItem.label)}</span>
+          <div class="role-selects">
+            ${modelSelect(`role-${category.key}-${roleItem.key}-model`, cell.model, false)}
+            ${modelSelect(`role-${category.key}-${roleItem.key}-backup`, cell.backup || "", true)}
+          </div>
+        </div>`;
+    }).join("");
+    return `
+      <div class="category-block" title="${escapeHtml(category.description)}">
+        <div class="routing-row">
+          <span class="routing-label category-name">${escapeHtml(category.key[0].toUpperCase() + category.key.slice(1))}</span>
+          ${modelSelect(`cat-${category.key}`, state.categoryModels[category.key], false)}
+        </div>
+        <div class="role-head"><span></span><span>Model</span><span>Backup</span></div>
+        ${roles}
+      </div>`;
+  }).join("");
 
   document.querySelector("#chain-list").innerHTML = state.models.map((model) => {
     const chain = state.fallbackChains[model.id] || [];
@@ -125,12 +142,57 @@ function collectRouting() {
     const chain = [...row.querySelectorAll("select")].map((select) => select.value).filter(Boolean);
     fallbackChains[row.dataset.model] = [...new Set(chain)].filter((item) => item !== row.dataset.model);
   });
+  const roleModels = {};
+  document.querySelectorAll(".role-row").forEach((row) => {
+    const [model, backup] = [...row.querySelectorAll("select")].map((select) => select.value);
+    roleModels[row.dataset.category] = roleModels[row.dataset.category] || {};
+    roleModels[row.dataset.category][row.dataset.role] = { model, backup: backup === model ? "" : backup };
+  });
   return {
     autoEnabled: document.querySelector("#auto-enabled").checked,
     fallbackEnabled: document.querySelector("#fallback-enabled").checked,
     categoryModels,
+    roleModels,
     fallbackChains
   };
+}
+
+let modes = null;
+
+function renderModes(state) {
+  modes = state;
+  const efforts = (selected) => [`<option value="">Model default</option>`, ...state.efforts.map((effort) =>
+    `<option value="${effort}" ${effort === selected ? "selected" : ""}>${effort}</option>`)].join("");
+  document.querySelector("#mode-list").innerHTML = state.slots.map((slot) => {
+    // Keep a non-DroidProxy or broken current value visible instead of silently replacing it.
+    const keepCurrent = (slot.external || slot.missing)
+      ? `<option value="__current__" selected>${escapeHtml(slot.missing ? `Missing: ${slot.current}` : `Keep: ${slot.current}`)}</option>`
+      : "";
+    const options = state.models.map((model) =>
+      `<option value="${escapeHtml(model.id)}" ${!keepCurrent && model.id === slot.model ? "selected" : ""}>${escapeHtml(model.label)}</option>`).join("");
+    return `
+      <div class="mode-row ${slot.missing ? "missing" : ""}" data-slot="${escapeHtml(slot.key)}">
+        <span class="routing-label">${escapeHtml(slot.label)}${slot.missing ? ` <span class="warn-badge" title="This model ID no longer exists in DroidProxy">broken</span>` : ""}</span>
+        <div class="mode-selects">
+          <select class="mode-model">${keepCurrent}<option value="" ${!keepCurrent && !slot.current ? "selected" : ""}>Factory default</option>${options}</select>
+          <select class="mode-effort">${efforts(slot.effort)}</select>
+        </div>
+      </div>`;
+  }).join("");
+}
+
+function collectModes() {
+  const choices = {};
+  document.querySelectorAll(".mode-row").forEach((row) => {
+    const model = row.querySelector(".mode-model").value;
+    if (model === "__current__") return;
+    choices[row.dataset.slot] = { model, effort: row.querySelector(".mode-effort").value };
+  });
+  return choices;
+}
+
+async function refreshModes() {
+  renderModes(await api.factoryModes());
 }
 
 async function refreshRouting() {
@@ -313,8 +375,30 @@ document.querySelector("#fallback-enabled").addEventListener("change", () => sav
 document.querySelector("#reset-chains-btn").addEventListener("click", async () => {
   routing.fallbackChains = { ...routing.defaults.fallbackChains };
   routing.categoryModels = { ...routing.defaults.categoryModels };
+  routing.roleModels = JSON.parse(JSON.stringify(routing.defaults.roleModels));
   renderRouting(routing);
   await saveRouting("Routing reset to defaults.");
+});
+
+document.querySelector("#recommended-modes-btn").addEventListener("click", () => {
+  for (const slot of modes.slots) {
+    const row = document.querySelector(`.mode-row[data-slot="${CSS.escape(slot.key)}"]`);
+    const select = row.querySelector(".mode-model");
+    if (![...select.options].some((option) => option.value === slot.recommended)) continue;
+    select.value = slot.recommended;
+  }
+  showToast("Recommended Auto models selected. Click Apply to Factory to save.");
+});
+
+document.querySelector("#apply-modes-btn").addEventListener("click", async () => {
+  try {
+    renderModes(await api.applyFactoryModes(collectModes()));
+    renderFactoryStatus(await api.factoryStatus());
+    document.querySelector("#auto-enabled").checked = (await api.routing()).autoEnabled;
+    showToast("Factory modes saved. Open a new Factory session to use them.");
+  } catch (error) {
+    showToast(cleanIpcError(error));
+  }
 });
 
 document.querySelector("#api-provider-list").addEventListener("click", async (event) => {
@@ -333,7 +417,7 @@ document.querySelector("#api-provider-list").addEventListener("click", async (ev
     } else {
       return;
     }
-    await refreshRouting();
+    await Promise.all([refreshRouting(), refreshModes()]);
     renderFactoryStatus(await api.factoryStatus());
   } catch (error) {
     showToast(cleanIpcError(error));
@@ -354,7 +438,7 @@ async function boot() {
   renderLogs(await api.getLogs());
   renderFactoryStatus(await api.factoryStatus());
   await refreshAccounts();
-  await Promise.all([refreshRouting(), refreshApiProviders()]);
+  await Promise.all([refreshRouting(), refreshApiProviders(), refreshModes()]);
   await refreshUsage();
 }
 

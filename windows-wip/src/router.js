@@ -9,6 +9,12 @@ const http = require("http");
 
 const AUTO_MODEL_ID = "droidproxy-auto";
 
+// Factory Missions run three roles; each gets its own Auto model so the role
+// is known from the model ID alone.
+const ROLES = ["orchestrator", "worker", "validator"];
+const AUTO_ROLE_IDS = Object.fromEntries(ROLES.map((role) => [`${AUTO_MODEL_ID}-${role}`, role]));
+const isAutoModel = (model) => model === AUTO_MODEL_ID || Boolean(AUTO_ROLE_IDS[model]);
+
 // Errors that mean "this model can't serve right now" rather than "bad request".
 const FALLBACK_STATUSES = new Set([429, 503, 529]);
 const DEFAULT_COOLDOWN_MS = 10 * 60 * 1000;
@@ -34,6 +40,50 @@ const DEFAULT_CATEGORY_MODELS = {
   research: "gpt-6-astra",
   math: "claude-sonnet-5-5",
   quick: "claude-haiku-5-5"
+};
+
+// Orchestrator: strongest planner for the task type. Worker: capable but faster
+// and cheaper, since it does most of the tokens. Validator: a different model
+// family from the worker, so reviews are independent. Each role has its own
+// backup. Sources: Vals AI (Terminal-Bench 4.0, Vibe Code, Legal Index,
+// LegalBench, Finance Agent, EMB, Science Index, ProofBench), Arena, Oct 2026.
+const role = (model, backup) => ({ model, backup });
+const DEFAULT_ROLE_MODELS = {
+  coding: {
+    orchestrator: role("claude-opus-5-5", "gpt-6-astra"),
+    worker: role("gpt-6.1-sol", "claude-sonnet-5-5"),
+    validator: role("claude-sonnet-5-5", "gemini-4-argon-high")
+  },
+  legal: {
+    orchestrator: role("gemini-4-argon-high", "claude-opus-5-5"),
+    worker: role("gemini-3.8-flash-high", "claude-haiku-5-5"),
+    validator: role("claude-fable-5-1", "claude-opus-5-5")
+  },
+  business: {
+    orchestrator: role("claude-opus-5-5", "gemini-4-argon-high"),
+    worker: role("gemini-3.8-flash-high", "gpt-6.1-terra"),
+    validator: role("claude-fable-5-1", "ag-c55o-high")
+  },
+  writing: {
+    orchestrator: role("gemini-4-argon-high", "claude-opus-5-5"),
+    worker: role("gemini-3.8-flash-high", "claude-sonnet-5-5"),
+    validator: role("claude-opus-5-5", "ag-c55o-high")
+  },
+  research: {
+    orchestrator: role("gpt-6-astra", "claude-opus-5-5"),
+    worker: role("gpt-6.1-sol", "claude-sonnet-5-5"),
+    validator: role("claude-opus-5-5", "gemini-4-argon-high")
+  },
+  math: {
+    orchestrator: role("gemini-4-argon-high", "claude-fable-5-1"),
+    worker: role("claude-sonnet-5-5", "gpt-6.1-sol"),
+    validator: role("gpt-6.1-sol", "gpt-6-astra")
+  },
+  quick: {
+    orchestrator: role("claude-haiku-5-5", "gemini-3.8-flash-high"),
+    worker: role("claude-haiku-5-5", "gpt-6-luna"),
+    validator: role("gemini-3.8-flash-high", "gpt-6-luna")
+  }
 };
 
 const DEFAULT_CHAINS = {
@@ -116,11 +166,12 @@ function createRouter({ targetHost, targetPort, log, getConfig, onFallback }) {
     return new Date(Date.now() + ms);
   }
 
-  // Primary first, then its chain; models still cooling down are skipped unless
-  // nothing else is left, so a request is never refused without trying.
-  function candidatesFor(model) {
+  // Primary first, then any role backup, then the primary's chain; models still
+  // cooling down are skipped unless nothing else is left, so a request is never
+  // refused without trying.
+  function candidatesFor(model, roleBackups = []) {
     const config = getConfig();
-    const chain = config.fallbackEnabled ? (config.fallbackChains[model] || []) : [];
+    const chain = config.fallbackEnabled ? [...roleBackups, ...(config.fallbackChains[model] || [])] : [];
     const ordered = [model, ...chain].filter((item, index, all) => item && all.indexOf(item) === index);
     const available = ordered.filter((item) => !isCooling(item));
     return available.length ? available : ordered;
@@ -173,17 +224,27 @@ function createRouter({ targetHost, targetPort, log, getConfig, onFallback }) {
     return "coding";
   }
 
-  async function resolveAuto(headers, body) {
-    const key = sessionKey(headers, body);
+  // `autoModel` is droidproxy-auto or one of its role variants. The category is
+  // pinned per session; the model then comes from the role table.
+  async function resolveAuto(headers, body, autoModel = AUTO_MODEL_ID) {
+    const roleName = AUTO_ROLE_IDS[autoModel] || null;
+    const key = `${roleName || "main"}|${sessionKey(headers, body)}`;
     const pinned = sessions.get(key);
     if (pinned) return pinned;
 
+    const config = getConfig();
     const category = await classify(taskText(body));
-    const model = getConfig().categoryModels[category] || DEFAULT_CATEGORY_MODELS[category] || DEFAULT_CATEGORY_MODELS.coding;
-    const choice = { category, model };
+    let choice;
+    if (roleName) {
+      const cell = config.roleModels?.[category]?.[roleName] || DEFAULT_ROLE_MODELS[category][roleName];
+      choice = { category, role: roleName, model: cell.model, backups: cell.backup ? [cell.backup] : [] };
+    } else {
+      const model = config.categoryModels[category] || DEFAULT_CATEGORY_MODELS[category] || DEFAULT_CATEGORY_MODELS.coding;
+      choice = { category, role: null, model, backups: [] };
+    }
     sessions.set(key, choice);
     if (sessions.size > 1000) sessions.delete(sessions.keys().next().value);
-    log(`Auto: new session classified as ${category}; using ${model}`);
+    log(`Auto${roleName ? ` ${roleName}` : ""}: new session classified as ${category}; using ${choice.model}`);
     return choice;
   }
 
@@ -197,6 +258,10 @@ function createRouter({ targetHost, targetPort, log, getConfig, onFallback }) {
 
 module.exports = {
   AUTO_MODEL_ID,
+  AUTO_ROLE_IDS,
+  ROLES,
+  DEFAULT_ROLE_MODELS,
+  isAutoModel,
   FALLBACK_STATUSES,
   CATEGORIES,
   DEFAULT_CATEGORY_MODELS,
