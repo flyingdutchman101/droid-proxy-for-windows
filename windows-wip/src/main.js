@@ -1180,7 +1180,12 @@ if (!hasInstanceLock) {
     createWindow();
     // Factory can't reach the custom models until the proxy is up, so start it right away.
     startProxy().catch((error) => log(`Auto-start failed: ${error.message}`));
-    refreshQuotaCache().catch(() => {});
+    // The backend renews expired OAuth tokens only once it runs, so give it a
+    // minute before the first quota read, and retry soon if a plan is missing.
+    setTimeout(async () => {
+      const first = await refreshQuotaCache().catch(() => null);
+      if (!first || Object.keys(first.buckets).length < 3) setTimeout(() => refreshQuotaCache().catch(() => {}), 2 * 60 * 1000);
+    }, 60 * 1000);
     setInterval(() => refreshQuotaCache().catch(() => {}), QUOTA_REFRESH_MS);
   });
 }
