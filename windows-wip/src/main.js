@@ -298,9 +298,26 @@ function encryptSecret(secret) {
 function decryptSecret(encoded) {
   try {
     return safeStorage.decryptString(Buffer.from(encoded, "base64"));
-  } catch {
+  } catch (error) {
+    if (Date.now() - lastDecryptWarning > 60 * 1000) {
+      lastDecryptWarning = Date.now();
+      log(`Could not decrypt a saved API key (${error.message}); will retry`);
+    }
     return "";
   }
+}
+let lastDecryptWarning = 0;
+
+// Decryption can fail transiently when Windows starts the app very early, which
+// used to drop every API provider from the backend config until the next
+// restart. Rewrite the config once all saved keys decrypt again.
+let apiProvidersInConfig = 0;
+function ensureApiKeysInConfig() {
+  const saved = Object.keys(settings.apiProviders || {}).length;
+  if (apiProvidersInConfig >= saved) return;
+  const before = apiProvidersInConfig;
+  writeConfig();
+  if (apiProvidersInConfig > before) log(`API providers restored in backend config (${apiProvidersInConfig} of ${saved})`);
 }
 
 function configuredApiProviders() {
@@ -380,8 +397,10 @@ function writeConfig() {
     .replaceAll("__DEBUG__", String(Boolean(settings.debug)))
     .replaceAll("__REQUEST_RETRY__", String(settings.requestRetry))
     .replaceAll("__REQUEST_TIMEOUT__", settings.requestTimeout);
-  config += apiKeysYaml(configuredApiProviders());
+  const providers = configuredApiProviders();
+  config += apiKeysYaml(providers);
   fs.writeFileSync(CONFIG_PATH, config);
+  apiProvidersInConfig = Object.keys(providers).length;
   return CONFIG_PATH;
 }
 
@@ -760,6 +779,7 @@ function quotaFor(model) {
 }
 
 async function refreshQuotaCache() {
+  ensureApiKeysInConfig();
   const buckets = {};
   const keep = (bucket, value) => {
     if (typeof value !== "number") return;
@@ -1182,6 +1202,7 @@ if (!hasInstanceLock) {
     startProxy().catch((error) => log(`Auto-start failed: ${error.message}`));
     // The backend renews expired OAuth tokens only once it runs, so give it a
     // minute before the first quota read, and retry soon if a plan is missing.
+    setTimeout(ensureApiKeysInConfig, 15 * 1000);
     setTimeout(async () => {
       const first = await refreshQuotaCache().catch(() => null);
       if (!first || Object.keys(first.buckets).length < 3) setTimeout(() => refreshQuotaCache().catch(() => {}), 2 * 60 * 1000);
