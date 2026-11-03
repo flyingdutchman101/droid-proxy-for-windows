@@ -1,5 +1,6 @@
 const http = require("http");
 const { isAutoModel, FALLBACK_STATUSES } = require("./router");
+const { effortsForModel } = require("./providers");
 
 // Front proxy that sits between Factory and cli-proxy-api, mirroring the Claude
 // request fixes the macOS ThinkingProxy applies:
@@ -93,13 +94,50 @@ const ANTIGRAVITY_MODEL_ALIASES = {
   "ag-c55s-high": "claude-sonnet-5-5-high"
 };
 
+const EFFORT_ORDER = ["none", "minimal", "low", "medium", "high", "xhigh", "max"];
+
+// Closest supported reasoning level, preferring the higher one on a tie.
+// Factory can send a level a model rejects (Qwen3.8 Max only takes "high").
+function nearestEffort(requested, supported) {
+  if (supported.includes(requested)) return requested;
+  const rank = EFFORT_ORDER.indexOf(requested);
+  if (rank < 0) return supported[supported.length - 1];
+  return [...supported].sort((a, b) => {
+    const da = Math.abs(EFFORT_ORDER.indexOf(a) - rank);
+    const db = Math.abs(EFFORT_ORDER.indexOf(b) - rank);
+    return da - db || EFFORT_ORDER.indexOf(b) - EFFORT_ORDER.indexOf(a);
+  })[0];
+}
+
+// Rewrites reasoning_effort / reasoning.effort to a level the model accepts;
+// removes it for models without reasoning levels. Returns true when changed.
+function normalizeEffort(body, supported) {
+  if (!Array.isArray(supported)) return false;
+  let changed = false;
+  const fix = (value) => (supported.length ? nearestEffort(value, supported) : undefined);
+  if (typeof body.reasoning_effort === "string" && !supported.includes(body.reasoning_effort)) {
+    const next = fix(body.reasoning_effort);
+    if (next) body.reasoning_effort = next;
+    else delete body.reasoning_effort;
+    changed = true;
+  }
+  if (typeof body.reasoning?.effort === "string" && !supported.includes(body.reasoning.effort)) {
+    const next = fix(body.reasoning.effort);
+    if (next) body.reasoning.effort = next;
+    else delete body.reasoning.effort;
+    changed = true;
+  }
+  return changed;
+}
+
 // Builds the upstream body for one attempt. `raw` is reused untouched when
 // nothing changes so Anthropic prompt-cache key ordering is preserved.
-function prepareBody(headers, raw, model, { includeUsage = false } = {}) {
+function prepareBody(headers, raw, model, { includeUsage = false, efforts = null } = {}) {
   const body = JSON.parse(raw.toString("utf8"));
   let changed = body.model !== model;
   body.model = ANTIGRAVITY_MODEL_ALIASES[model] || model;
   changed = changed || body.model !== model;
+  changed = normalizeEffort(body, efforts) || changed;
 
   // Streamed Chat Completions only report token usage when asked.
   if (includeUsage && body.stream === true && Array.isArray(body.messages) && !body.stream_options?.include_usage) {
@@ -186,7 +224,7 @@ function createFrontProxy({ targetHost, targetPort, log, router = null, usageTra
         if (tracked) delete headers["accept-encoding"];
         let upstreamRes;
         try {
-          upstreamRes = await sendUpstream(target, req, headers, prepareBody(headers, raw, model, { includeUsage: tracked && req.url.includes("/chat/completions") }));
+          upstreamRes = await sendUpstream(target, req, headers, prepareBody(headers, raw, model, { includeUsage: tracked && req.url.includes("/chat/completions"), efforts: effortsForModel(model) }));
         } catch (error) {
           failUpstream(res, error);
           return;
@@ -213,4 +251,4 @@ function createFrontProxy({ targetHost, targetPort, log, router = null, usageTra
   });
 }
 
-module.exports = { createFrontProxy, sanitizeThinkingBlocks, rewriteAnthropicBeta, prepareBody };
+module.exports = { createFrontProxy, sanitizeThinkingBlocks, rewriteAnthropicBeta, prepareBody, nearestEffort };

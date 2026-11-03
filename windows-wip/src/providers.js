@@ -111,6 +111,20 @@ function providerModels(providerKey, regionKey) {
   return providerRegion(providerKey, regionKey)?.models || API_PROVIDERS[providerKey].models;
 }
 
+// Reasoning levels an API-key model accepts ("qwen/qwen3.8-max" -> ["high"]),
+// or null when the model is not an API-key model.
+function effortsForModel(modelId) {
+  for (const [key, provider] of Object.entries(API_PROVIDERS)) {
+    const prefix = `${key}/`;
+    if (!modelId.startsWith(prefix)) continue;
+    const name = modelId.slice(prefix.length);
+    const models = [provider.models, ...Object.values(provider.regions).map((region) => region.models || [])].flat();
+    const match = models.find((model) => model.name === name);
+    return match ? match.efforts : null;
+  }
+  return null;
+}
+
 // Picks the region a key belongs to when its prefix makes that unambiguous.
 function regionForKey(providerKey, apiKey, regionKey) {
   if (providerKey === "qwen" && /^sk-sp-/.test(apiKey)) return "tokenplan";
@@ -150,4 +164,4 @@ function apiKeysYaml(configured) {
   return `\n# API-key providers configured in DroidProxy\napi-keys:\n  openai-compatibility:\n${groups.join("\n")}\n`;
 }
 
-module.exports = { API_PROVIDERS, apiModelId, providerRegion, providerModels, regionForKey, apiKeysYaml };
+module.exports = { API_PROVIDERS, apiModelId, providerRegion, providerModels, regionForKey, effortsForModel, apiKeysYaml };
