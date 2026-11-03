@@ -131,6 +131,11 @@ function renderRouting(state) {
   document.querySelector("#overflow-selects").innerHTML = overflowSelects("overflow", state.overflowModels, 3);
   document.querySelector("#mission-overflow-selects").innerHTML = overflowSelects("mission-overflow", state.missionOverflowModels, 3);
 
+  const boost = state.expiringBoost || {};
+  document.querySelector("#expiring-enabled").checked = boost.enabled !== false;
+  document.querySelector("#expiring-hours").value = boost.hours ?? 24;
+  document.querySelector("#expiring-min-left").value = boost.minLeft ?? 30;
+
   const premium = state.premium || {};
   document.querySelector("#premium-enabled").checked = premium.enabled !== false;
   document.querySelector("#premium-model-select").innerHTML = modelSelect("premium-model", premium.model, false);
@@ -151,7 +156,13 @@ const QUOTA_LABELS = {
 function renderQuotas(state) {
   const entries = Object.entries(state.quotas?.buckets || {});
   document.querySelector("#quota-snapshot").innerHTML = entries.length
-    ? entries.map(([bucket, left]) => `<span class="quota-pill ${left < state.overflowThreshold ? "low" : ""}">${escapeHtml(QUOTA_LABELS[bucket] || bucket)} ${Math.round(left)}% left</span>`).join("")
+    ? entries.map(([bucket, left]) => {
+      const expiring = state.quotas.expiring?.[bucket];
+      const label = `${escapeHtml(QUOTA_LABELS[bucket] || bucket)} ${Math.round(left)}% left`;
+      return expiring
+        ? `<span class="quota-pill expiring" title="Weekly/monthly window resets soon with quota unused">${label} · ${Math.round(expiring.left)}% unused, resets in ${Math.round(expiring.hoursLeft)}h → boosting</span>`
+        : `<span class="quota-pill ${left < state.overflowThreshold ? "low" : ""}">${label}</span>`;
+    }).join("")
       + (state.quotas.updatedAt ? `<span class="usage-note">updated ${new Date(state.quotas.updatedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>` : "")
     : `<span class="usage-note">Reading subscription quotas…</span>`;
 }
@@ -189,6 +200,11 @@ function collectRouting() {
     overflowThreshold: Number(document.querySelector("#overflow-threshold").value),
     overflowModels: pickList("#overflow-selects"),
     missionOverflowModels: pickList("#mission-overflow-selects"),
+    expiringBoost: {
+      enabled: document.querySelector("#expiring-enabled").checked,
+      hours: Number(document.querySelector("#expiring-hours").value),
+      minLeft: Number(document.querySelector("#expiring-min-left").value)
+    },
     premium: {
       enabled: document.querySelector("#premium-enabled").checked,
       model: document.querySelector("#premium-model").value,

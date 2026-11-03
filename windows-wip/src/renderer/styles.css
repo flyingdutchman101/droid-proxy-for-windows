@@ -799,3 +799,9 @@ label {
   flex-wrap: wrap;
   gap: 4px 12px;
 }
+
+.quota-pill.expiring {
+  color: var(--accent-strong);
+  background: rgba(242, 123, 47, 0.14);
+  border-color: rgba(242, 123, 47, 0.5);
+}

@@ -112,6 +112,17 @@
         <p class="card-note">Each new Auto session uses whichever model in its pool (the task type's model plus its backups) has the most subscription quota left, so heavy coding drains every plan evenly. When every subscription in the pool is below the threshold, the session goes to your pay-per-token overflow models.</p>
         <div id="quota-snapshot" class="quota-snapshot"></div>
         <div class="premium-block">
+          <label class="check-row"><input id="expiring-enabled" type="checkbox" /> Use it or lose it: spend weekly/monthly quota on the strongest models before it resets</label>
+          <div class="routing-row">
+            <span class="routing-label">When resetting in</span>
+            <div class="threshold-input"><input id="expiring-hours" type="number" min="1" max="168" step="1" /> <span>hours or less</span></div>
+          </div>
+          <div class="routing-row">
+            <span class="routing-label">And unused ≥</span>
+            <div class="threshold-input"><input id="expiring-min-left" type="number" min="0" max="100" step="5" /> <span>% of the window</span></div>
+          </div>
+        </div>
+        <div class="premium-block">
           <label class="check-row"><input id="premium-enabled" type="checkbox" /> Premium model while its quota is plentiful</label>
           <div class="routing-row">
             <span class="routing-label">Premium model</span>

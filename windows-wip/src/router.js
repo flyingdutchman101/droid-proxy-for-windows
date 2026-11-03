@@ -135,6 +135,22 @@ const CATEGORY_EXCLUDES = {
 };
 const isExcluded = (model, prefixes) => (prefixes || []).some((prefix) => model.startsWith(prefix));
 
+// "Use it or lose it": while a subscription's weekly/monthly quota is about to
+// reset unused, its models win balanced pools and sessions move up to its
+// strongest model. Opus stays Opus for coding (Terminal-Bench 65% vs Fable
+// 58%); quick tasks are never upgraded.
+const EXPIRING_BONUS = 40;
+const STRONGER = {
+  "gpt-6-luna": "gpt-6.1-sol",
+  "gpt-6.1-sol": "gpt-6-astra",
+  "gpt-6.1-terra": "gpt-6-astra",
+  "claude-haiku-5-5": "claude-sonnet-5-5",
+  "claude-sonnet-5-5": "claude-opus-5-5",
+  "claude-opus-5-5": { model: "claude-fable-5-1", except: ["coding"] },
+  "gemini-3.8-flash-high": "gemini-4-argon-high",
+  "ag-c55s-high": "ag-c55o-high"
+};
+
 function textOf(content) {
   if (typeof content === "string") return content;
   if (!Array.isArray(content)) return "";
@@ -291,12 +307,30 @@ function createRouter({ targetHost, targetPort, log, getConfig, onFallback }) {
     } else {
       pick = { model: pool[0], reason: "" };
     }
+    if (config.balanced && category !== "quick") pick = upgradeIfExpiring(pick, category, exclude, config);
     // The rest of the pool stays as ordered backups behind the chosen model.
     const choice = { category, role: roleName, model: pick.model, backups: pool.filter((item) => item !== pick.model), exclude };
     sessions.set(key, choice);
     if (sessions.size > 1000) sessions.delete(sessions.keys().next().value);
     log(`Auto${roleName ? ` ${roleName}` : ""}: new session classified as ${category}; using ${choice.model}${pick.reason ? ` (${pick.reason})` : ""}`);
     return choice;
+  }
+
+  // Walks the STRONGER chain while the model's subscription is expiring unused,
+  // so the session spends that quota on the best model it offers.
+  function upgradeIfExpiring(pick, category, exclude, config) {
+    const info = config.expiringFor?.(pick.model);
+    if (!info) return pick;
+    let model = pick.model;
+    for (let step = 0; step < 3; step += 1) {
+      const rule = STRONGER[model];
+      const next = typeof rule === "string" ? rule : rule && !rule.except.includes(category) ? rule.model : null;
+      if (!next || isExcluded(next, exclude) || isCooling(next) || !config.isAvailable(next)) break;
+      model = next;
+    }
+    if (model === pick.model) return pick;
+    const reason = `${pick.reason ? `${pick.reason}; ` : ""}use it or lose it: ${Math.round(info.left)}% unused, resets in ${Math.round(info.hoursLeft)}h, upgraded ${pick.model} → ${model}`;
+    return { model, reason };
   }
 
   // Balanced: within a pool of comparable models, use the one whose
@@ -306,12 +340,14 @@ function createRouter({ targetHost, targetPort, log, getConfig, onFallback }) {
   function pickBalanced(pool, overflow, config) {
     const scored = pool.map((model, index) => {
       const left = isCooling(model) ? 0 : config.quotaFor(model);
-      return { model, left, score: (left ?? UNKNOWN_QUOTA) + (index === 0 ? PRIMARY_EDGE : 0) };
+      const expiring = !isCooling(model) && Boolean(config.expiringFor?.(model));
+      return { model, left, expiring, score: (left ?? UNKNOWN_QUOTA) + (index === 0 ? PRIMARY_EDGE : 0) + (expiring ? EXPIRING_BONUS : 0) };
     });
     const best = scored.reduce((top, item) => (item.score > top.score ? item : top), scored[0]);
-    const summary = scored.map((item) => `${item.model} ${item.left === null ? "?" : `${Math.round(item.left)}%`}`).join(", ");
+    const summary = scored.map((item) => `${item.model} ${item.left === null ? "?" : `${Math.round(item.left)}%`}${item.expiring ? " expiring" : ""}`).join(", ");
     const known = scored.filter((item) => item.left !== null);
-    const allLow = known.length > 0 && known.every((item) => item.left < config.overflowThreshold);
+    // Quota about to expire unused is never "low": spend it before overflowing.
+    const allLow = known.length > 0 && !scored.some((item) => item.expiring) && known.every((item) => item.left < config.overflowThreshold);
     const spare = (overflow || []).find((model) => config.isAvailable(model) && !isCooling(model));
     if (allLow && spare) return { model: spare, reason: `subscriptions low: ${summary}; overflow` };
     return { model: best.model, reason: `balanced: ${summary}` };

@@ -1,9 +1,14 @@
-const { app, BrowserWindow, ipcMain, shell, Tray, Menu, safeStorage, screen } = require("electron");
+const { app, BrowserWindow, ipcMain, shell, Tray, Menu, safeStorage, screen, net } = require("electron");
 const path = require("path");
 const fs = require("fs");
 const os = require("os");
 const { spawn, execFile } = require("child_process");
 const crypto = require("crypto");
+
+// Usage and balance requests use Chromium's network stack, which trusts the
+// Windows certificate store. Node's bundled CA list rejected chatgpt.com with
+// CERT_HAS_EXPIRED after a certificate-chain change.
+const httpFetch = (url, options) => net.fetch(url, options);
 const { createFrontProxy } = require("./proxy");
 const {
   AUTO_MODEL_ID,
@@ -58,6 +63,8 @@ const DEFAULT_SETTINGS = {
   missionOverflowModels: DEFAULT_MISSION_OVERFLOW_MODELS,
   // Fable for chosen task types while Claude has plenty of quota.
   premium: DEFAULT_PREMIUM,
+  // Spend unused weekly/monthly quota on strong models before it resets.
+  expiringBoost: { enabled: true, hours: 24, minLeft: 30 },
   fallbackEnabled: true,
   fallbackChains: DEFAULT_CHAINS,
   // { [providerKey]: { region, keyEnc } }; keys are encrypted with Windows DPAPI.
@@ -269,6 +276,11 @@ function sanitizeSettings(value) {
       model: typeof value.premium?.model === "string" && value.premium.model ? value.premium.model : DEFAULT_PREMIUM.model,
       threshold: Number.isFinite(Number(value.premium?.threshold)) ? Math.min(100, Math.max(0, Number(value.premium.threshold))) : DEFAULT_PREMIUM.threshold,
       categories: stringList(value.premium?.categories, DEFAULT_PREMIUM.categories).filter((category) => CATEGORIES[category])
+    },
+    expiringBoost: {
+      enabled: value.expiringBoost?.enabled !== false,
+      hours: Number.isFinite(Number(value.expiringBoost?.hours)) ? Math.min(168, Math.max(1, Number(value.expiringBoost.hours))) : 24,
+      minLeft: Number.isFinite(Number(value.expiringBoost?.minLeft)) ? Math.min(100, Math.max(0, Number(value.expiringBoost.minLeft))) : 30
     },
     fallbackEnabled: value.fallbackEnabled !== false,
     fallbackChains: Object.fromEntries(Object.entries(value.fallbackChains || DEFAULT_CHAINS)
@@ -527,6 +539,7 @@ function getRouter() {
       missionOverflowModels: settings.missionOverflowModels,
       premium: settings.premium,
       quotaFor,
+      expiringFor,
       isAvailable: (model) => modelOptions().some((item) => item.id === model)
     }),
     onFallback: (from, to, until) => {
@@ -675,7 +688,7 @@ async function fetchCodexUsage(accountId) {
     headers["ChatGPT-Account-Id"] = auth.account_id;
   }
 
-  const response = await fetch("https://chatgpt.com/backend-api/wham/usage", { headers });
+  const response = await httpFetch("https://chatgpt.com/backend-api/wham/usage", { headers });
   if (!response.ok) {
     throw new Error(`Usage API returned ${response.status}`);
   }
@@ -729,7 +742,7 @@ function tokenWindows(providerKey, regionKey) {
 }
 
 async function deepseekBalance(apiKey) {
-  const response = await fetch("https://api.deepseek.com/user/balance", { headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json" } });
+  const response = await httpFetch("https://api.deepseek.com/user/balance", { headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json" } });
   if (!response.ok) throw new Error(`DeepSeek balance API returned ${response.status}`);
   const json = await response.json();
   const symbol = { USD: "$", CNY: "¥" };
@@ -778,34 +791,73 @@ function quotaFor(model) {
   return typeof value === "number" ? value : null;
 }
 
+// Weekly/monthly windows are the ones whose unused quota is lost at reset;
+// 5-hour windows refill constantly.
+const isLongWindow = (title) => /week|month|7.?day|30.?day/i.test(title || "");
+
 async function refreshQuotaCache() {
   ensureApiKeysInConfig();
   const buckets = {};
-  const keep = (bucket, value) => {
+  const short = {};
+  const long = {};
+  let failed = 0;
+  const keepMax = (target, bucket, value) => {
     if (typeof value !== "number") return;
-    buckets[bucket] = Math.max(buckets[bucket] ?? -1, value);
+    target[bucket] = Math.max(target[bucket] ?? -1, value);
   };
   const tightest = (windows) => {
     const values = windows.map((item) => item.remainingPercent).filter((value) => typeof value === "number");
     return values.length ? Math.min(...values) : undefined;
   };
+  // Per bucket: the long window that resets soonest, with its % left.
+  const keepLong = (bucket, windows) => {
+    for (const item of windows.filter((entry) => isLongWindow(entry.title) && typeof entry.remainingPercent === "number" && entry.resetDate)) {
+      const current = long[bucket];
+      if (!current || Date.parse(item.resetDate) < Date.parse(current.resetAt)) long[bucket] = { left: item.remainingPercent, resetAt: item.resetDate, title: item.title };
+    }
+  };
+  const record = (bucket, windows) => {
+    keepMax(buckets, bucket, tightest(windows));
+    keepMax(short, bucket, tightest(windows.filter((item) => !isLongWindow(item.title))));
+    keepLong(bucket, windows);
+  };
   for (const account of listAccounts().filter((item) => !item.disabled && ["codex", "claude", "antigravity"].includes(item.provider))) {
     try {
       const windows = await fetchUsage(account.id);
       if (account.provider !== "antigravity") {
-        keep(account.provider, tightest(windows));
+        record(account.provider, windows);
         continue;
       }
       // Antigravity groups: "Gemini Models" vs "Claude and GPT models".
-      keep("antigravity-claude", tightest(windows.filter((item) => /claude|gpt/i.test(item.title))));
-      keep("antigravity-gemini", tightest(windows.filter((item) => !/claude|gpt/i.test(item.title))));
+      record("antigravity-claude", windows.filter((item) => /claude|gpt/i.test(item.title)));
+      record("antigravity-gemini", windows.filter((item) => !/claude|gpt/i.test(item.title)));
     } catch (error) {
+      failed += 1;
       log(`Balanced routing: could not read ${account.providerLabel} quota (${error.message})`);
     }
   }
-  quotaCache = { buckets, updatedAt: new Date().toISOString() };
-  log(`Balanced routing quotas: ${Object.entries(buckets).map(([key, value]) => `${key} ${Math.round(value)}%`).join(", ") || "none available"}`);
+  quotaCache = { buckets, short, long, failed, updatedAt: new Date().toISOString() };
+  const expiring = Object.keys(buckets).filter((bucket) => expiringInfo(bucket));
+  log(`Balanced routing quotas: ${Object.entries(buckets).map(([key, value]) => `${key} ${Math.round(value)}%`).join(", ") || "none available"}${expiring.length ? ` · expiring unused: ${expiring.join(", ")}` : ""}`);
   return quotaCache;
+}
+
+// "Use it or lose it": a long window resetting within `hours` with at least
+// `minLeft`% unused, and enough short-window headroom to actually spend it.
+function expiringInfo(bucket) {
+  const rule = settings.expiringBoost;
+  const entry = quotaCache.long?.[bucket];
+  if (!rule?.enabled || !entry) return null;
+  const hoursLeft = (Date.parse(entry.resetAt) - Date.now()) / 3600000;
+  const shortLeft = quotaCache.short?.[bucket];
+  if (hoursLeft <= 0 || hoursLeft > rule.hours || entry.left < rule.minLeft) return null;
+  if (typeof shortLeft === "number" && shortLeft < 10) return null;
+  return { left: entry.left, hoursLeft, resetAt: entry.resetAt };
+}
+
+function expiringFor(model) {
+  const bucket = quotaBucket(model);
+  return bucket ? expiringInfo(bucket) : null;
 }
 
 function fetchUsage(accountId) {
@@ -850,21 +902,21 @@ async function fetchClaudeUsage(account) {
 }
 
 function claudeUsageRequest(token) {
-  return fetch("https://api.anthropic.com/api/oauth/usage", {
+  return httpFetch("https://api.anthropic.com/api/oauth/usage", {
     headers: { Authorization: `Bearer ${token}`, "anthropic-beta": "oauth-2025-04-20" }
   });
 }
 
 async function refreshClaudeTokens(filePath, auth) {
   if (!auth.refresh_token) throw new Error("No refresh token available");
-  const response = await fetch("https://platform.claude.com/v1/oauth/token", {
+  const response = await httpFetch("https://platform.claude.com/v1/oauth/token", {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
       client_id: "9d1c250a-e61b-44d9-88ed-5944d1962f5e",
       grant_type: "refresh_token",
       refresh_token: auth.refresh_token
-    })
+    }).toString()
   });
   if (!response.ok) throw new Error(`Claude token refresh failed (${response.status})`);
 
@@ -884,7 +936,7 @@ async function refreshClaudeTokens(filePath, auth) {
 const ANTIGRAVITY_HEADERS = { "Content-Type": "application/json", "User-Agent": "antigravity/hub/2.9.1 windows/amd64" };
 
 async function cloudCodeRequest(url, token, body) {
-  const response = await fetch(url, {
+  const response = await httpFetch(url, {
     method: "POST",
     headers: { ...ANTIGRAVITY_HEADERS, Authorization: `Bearer ${token}` },
     body: JSON.stringify(body)
@@ -1205,7 +1257,7 @@ if (!hasInstanceLock) {
     setTimeout(ensureApiKeysInConfig, 15 * 1000);
     setTimeout(async () => {
       const first = await refreshQuotaCache().catch(() => null);
-      if (!first || Object.keys(first.buckets).length < 3) setTimeout(() => refreshQuotaCache().catch(() => {}), 2 * 60 * 1000);
+      if (!first || first.failed > 0) setTimeout(() => refreshQuotaCache().catch(() => {}), 2 * 60 * 1000);
     }, 60 * 1000);
     setInterval(() => refreshQuotaCache().catch(() => {}), QUOTA_REFRESH_MS);
   });
@@ -1258,7 +1310,8 @@ function routingState() {
     overflowModels: settings.overflowModels,
     missionOverflowModels: settings.missionOverflowModels,
     premium: settings.premium,
-    quotas: quotaCache,
+    expiringBoost: settings.expiringBoost,
+    quotas: { ...quotaCache, expiring: Object.fromEntries(Object.keys(quotaCache.buckets || {}).map((bucket) => [bucket, expiringInfo(bucket)]).filter(([, info]) => info)) },
     models: modelOptions(),
     cooling
   };
@@ -1356,7 +1409,8 @@ ipcMain.handle("routing:save", (_event, next) => {
     overflowThreshold: next.overflowThreshold,
     overflowModels: next.overflowModels,
     missionOverflowModels: next.missionOverflowModels,
-    premium: next.premium
+    premium: next.premium,
+    expiringBoost: next.expiringBoost
   });
   return routingState();
 });
