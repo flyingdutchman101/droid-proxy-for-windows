@@ -167,7 +167,9 @@ function sendUpstream({ targetHost, targetPort }, req, headers, body) {
   });
 }
 
-function createFrontProxy({ targetHost, targetPort, log, router = null, usageTracker = null }) {
+// `effortsFor(model)` returns the reasoning levels a model accepts (or null);
+// it defaults to the API-key model catalog.
+function createFrontProxy({ targetHost, targetPort, log, router = null, usageTracker = null, effortsFor = effortsForModel }) {
   const target = { targetHost, targetPort };
   const failUpstream = (res, error) => {
     log(`Proxy upstream error: ${error.message}`);
@@ -224,7 +226,7 @@ function createFrontProxy({ targetHost, targetPort, log, router = null, usageTra
         if (tracked) delete headers["accept-encoding"];
         let upstreamRes;
         try {
-          upstreamRes = await sendUpstream(target, req, headers, prepareBody(headers, raw, model, { includeUsage: tracked && req.url.includes("/chat/completions"), efforts: effortsForModel(model) }));
+          upstreamRes = await sendUpstream(target, req, headers, prepareBody(headers, raw, model, { includeUsage: tracked && req.url.includes("/chat/completions"), efforts: effortsFor(model) }));
         } catch (error) {
           failUpstream(res, error);
           return;

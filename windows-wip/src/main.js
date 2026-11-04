@@ -25,7 +25,7 @@ const {
   DEFAULT_PREMIUM,
   createRouter
 } = require("./router");
-const { API_PROVIDERS, apiModelId, providerRegion, providerModels, regionForKey, apiKeysYaml } = require("./providers");
+const { API_PROVIDERS, apiModelId, providerRegion, providerModels, regionForKey, effortsForModel, apiKeysYaml } = require("./providers");
 const { createUsageTracker } = require("./usage");
 
 const APP_NAME = "VeryCuteDroidProxy";
@@ -147,6 +147,50 @@ const FACTORY_MODELS = [
   kimiModel("kimi-k2.6", "DroidProxy: Kimi K2.6", 262144, "high")
 ];
 const DROIDPROXY_MODEL_PREFIXES = ["custom:droidproxy:", "custom:CC:"];
+
+// Factory's "Behaves like" (baseModelId): the built-in model whose prompts,
+// tools, and reasoning levels a custom model inherits. IDs from Factory's
+// Available Models page (Nov 2026). Models with no built-in twin map to the
+// closest one in the same family; the proxy then maps any reasoning level the
+// real model rejects to its nearest supported level. API models are looked up
+// by their upstream name.
+const BASE_MODEL_IDS = {
+  "gpt-6-astra": "gpt-6-astra",
+  "gpt-6.1-sol": "gpt-6.1-sol",
+  "gpt-6.1-terra": "gpt-6.1-sol",
+  "gpt-6-luna": "gpt-6-luna",
+  "claude-fable-5-1": "claude-fable-5.1",
+  "claude-opus-5-5": "claude-opus-5-5",
+  "claude-sonnet-5-5": "claude-sonnet-5-5",
+  "claude-haiku-5-5": "claude-haiku-5-5",
+  "gemini-3.8-flash-high": "gemini-3.8-flash",
+  "gemini-4-argon-high": "gemini-3.8-flash",
+  "ag-c55o-high": "claude-opus-5-5",
+  "ag-c55s-high": "claude-sonnet-5-5",
+  "kimi-k3": "kimi-k3",
+  "kimi-k2.6": "kimi-k3",
+  "kimi-k3.1-pro": "kimi-k3",
+  "deepseek-v4-pro": "deepseek-v4-pro",
+  "deepseek-flash": "deepseek-v4.1-flash",
+  "glm-5.3": "glm-5.3",
+  "qwen3.8-max": "qwen3.8-max",
+  "qwen3.8-max-0902": "qwen3.8-max",
+  "qwen3.8-flash": "qwen3.8-max"
+};
+// Auto requests arrive in Anthropic format and usually land on a strong model.
+const AUTO_BASE_MODEL_ID = "claude-opus-5-5";
+
+function baseModelIdFor(model) {
+  if (AUTO_FACTORY_MODELS.some((item) => item.model === model)) return AUTO_BASE_MODEL_ID;
+  return BASE_MODEL_IDS[model] || BASE_MODEL_IDS[model.split("/").pop()] || null;
+}
+
+// Reasoning levels each model accepts, for the proxy's effort mapping.
+function effortsFor(model) {
+  const api = effortsForModel(model);
+  if (api) return api;
+  return FACTORY_MODELS.find((item) => item.model === model)?.supportedReasoningEfforts || null;
+}
 
 let mainWindow;
 let proxyProcess = null;
@@ -555,7 +599,7 @@ function getRouter() {
 
 function startFrontProxy() {
   return new Promise((resolve, reject) => {
-    const server = createFrontProxy({ targetHost: settings.host, targetPort: backendPort(), log, router: getRouter(), usageTracker: getUsageTracker() });
+    const server = createFrontProxy({ targetHost: settings.host, targetPort: backendPort(), log, router: getRouter(), usageTracker: getUsageTracker(), effortsFor });
     server.once("error", (error) => {
       reject(new Error(`Could not listen on ${settings.host}:${settings.port}: ${error.message}`));
     });
@@ -1087,6 +1131,8 @@ function factoryModels() {
     if (modelDefinition.maxContextLimit) {
       entry.maxContextLimit = modelDefinition.maxContextLimit;
     }
+    const baseModelId = baseModelIdFor(modelDefinition.model);
+    if (baseModelId) entry.baseModelId = baseModelId;
     if (settings.enableThinking && modelDefinition.supportedReasoningEfforts.length) {
       entry.enableThinking = true;
       entry.supportedReasoningEfforts = modelDefinition.supportedReasoningEfforts;
