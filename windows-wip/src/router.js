@@ -135,11 +135,12 @@ const CATEGORY_EXCLUDES = {
 };
 const isExcluded = (model, prefixes) => (prefixes || []).some((prefix) => model.startsWith(prefix));
 
-// "Use it or lose it": while a subscription's weekly/monthly quota is about to
-// reset unused, its models win balanced pools and sessions move up to its
-// strongest model. Opus stays Opus for coding (Terminal-Bench 65% vs Fable
-// 58%); quick tasks are never upgraded.
-const EXPIRING_BONUS = 40;
+// Pace boost ("use it or lose it"): a plan is ahead of pace when its weekly or
+// monthly window has more % left than % of time left (36% left with 2h of 168h
+// to go is +35). While a plan is ahead by the boost margin, sessions on it move
+// up to its strongest model and run at maximum reasoning effort. Opus stays
+// Opus for coding (Terminal-Bench 65% vs Fable 58%). Quick tasks move up at
+// most one step.
 const STRONGER = {
   "gpt-6-luna": "gpt-6.1-sol",
   "gpt-6.1-sol": "gpt-6-astra",
@@ -150,6 +151,14 @@ const STRONGER = {
   "gemini-3.8-flash-high": "gemini-4-argon-high",
   "ag-c55s-high": "ag-c55o-high"
 };
+const DEFAULT_PACE = { enabled: true, surplus: 15, effortBoost: true };
+// Pool order still matters: the usual pick gets a small head start.
+const POSITION_BONUS = [10, 6, 3];
+// A plan whose 5-hour window is nearly empty cannot take a new session now.
+const SHORT_WINDOW_FLOOR = 10;
+// Pinned sessions are re-scored on the next user message after this long, so
+// a long session follows whichever plan most needs spending.
+const REPICK_MS = 15 * 60 * 1000;
 
 function textOf(content) {
   if (typeof content === "string") return content;
@@ -178,12 +187,22 @@ function taskText(body) {
   return latest.slice(-3000);
 }
 
+// User messages with real text (tool-result turns and pure context blocks do
+// not count), used to spot a new user turn in a pinned session.
+function userTurns(body) {
+  return userTexts(body).filter((text) => stripTaggedBlocks(text)).length;
+}
+
 function sessionKey(headers, body) {
   const header = headers["x-claude-code-session-id"] || headers["x-session-id"] || headers["session_id"];
   if (header) return `h:${header}`;
   if (typeof body?.prompt_cache_key === "string") return `p:${body.prompt_cache_key}`;
   const first = userTexts(body)[0] || "";
   return `t:${crypto.createHash("sha256").update(first).digest("hex").slice(0, 24)}`;
+}
+
+function formatHours(hours) {
+  return hours >= 48 ? `${Math.round(hours / 24)}d` : `${Math.round(hours)}h`;
 }
 
 function parseCategory(reply) {
@@ -221,7 +240,11 @@ function createRouter({ targetHost, targetPort, log, getConfig, onFallback }) {
     const config = getConfig();
     const chain = config.fallbackEnabled ? [...roleBackups, ...(config.fallbackChains[model] || [])] : [];
     const ordered = [model, ...chain.filter((item) => !isExcluded(item, exclude))].filter((item, index, all) => item && all.indexOf(item) === index);
-    const available = ordered.filter((item) => !isCooling(item));
+    const empty = (item) => {
+      const left = config.quotaFor ? config.quotaFor(item) : null;
+      return left !== null && left < 1;
+    };
+    const available = ordered.filter((item) => !isCooling(item) && !empty(item));
     return available.length ? available : ordered;
   }
 
@@ -273,15 +296,36 @@ function createRouter({ targetHost, targetPort, log, getConfig, onFallback }) {
   }
 
   // `autoModel` is droidproxy-auto or one of its role variants. The category is
-  // pinned per session; the model then comes from the role table.
+  // pinned per session; the model comes from the role table and is re-scored
+  // on a later user message, so long sessions keep following quota.
   async function resolveAuto(headers, body, autoModel = AUTO_MODEL_ID) {
     const roleName = AUTO_ROLE_IDS[autoModel] || null;
     const key = `${roleName || "main"}|${sessionKey(headers, body)}`;
+    const turns = userTurns(body);
     const pinned = sessions.get(key);
-    if (pinned) return pinned;
+    if (pinned) {
+      const newTurn = turns > pinned.turns;
+      // "ok"/"continue" openers get classified quick; re-classify once real work shows up.
+      const reclassify = newTurn && pinned.category === "quick";
+      if (!newTurn || (!reclassify && Date.now() - pinned.pickedAt < REPICK_MS)) return pinned;
+      const category = reclassify ? await classify(taskText(body)) : pinned.category;
+      const next = choose(category, roleName, turns);
+      if (next.model !== pinned.model || category !== pinned.category) {
+        log(`Auto${roleName ? ` ${roleName}` : ""}: session ${category !== pinned.category ? `re-classified as ${category}; ` : ""}moved ${pinned.model} → ${next.model}${next.boost ? " at max effort" : ""}${next.reason ? ` (${next.reason})` : ""}`);
+      }
+      Object.assign(pinned, next);
+      return pinned;
+    }
 
-    const config = getConfig();
     const category = await classify(taskText(body));
+    const choice = choose(category, roleName, turns);
+    sessions.set(key, choice);
+    if (sessions.size > 1000) sessions.delete(sessions.keys().next().value);
+    log(`Auto${roleName ? ` ${roleName}` : ""}: new session classified as ${category}; using ${choice.model}${choice.boost ? " at max effort" : ""}${choice.reason ? ` (${choice.reason})` : ""}`);
+    return choice;
+  }
+
+  function poolFor(category, roleName, config) {
     let pool;
     if (roleName) {
       const cell = config.roleModels?.[category]?.[roleName] || DEFAULT_ROLE_MODELS[category][roleName];
@@ -291,7 +335,13 @@ function createRouter({ targetHost, targetPort, log, getConfig, onFallback }) {
       pool = [model, ...(CATEGORY_POOLS[category] || (config.fallbackChains[model] || []).slice(0, 3))];
     }
     const exclude = CATEGORY_EXCLUDES[category] || [];
-    pool = pool.filter((item, index) => index === 0 || (item && !isExcluded(item, exclude)));
+    return { pool: pool.filter((item, index) => index === 0 || (item && !isExcluded(item, exclude))), exclude };
+  }
+
+  function choose(category, roleName, turns) {
+    const config = getConfig();
+    const { exclude } = poolFor(category, roleName, config);
+    let { pool } = poolFor(category, roleName, config);
     const premium = config.premium || DEFAULT_PREMIUM;
     const premiumApplies = config.balanced && !roleName && premium.enabled && premium.categories.includes(category) && config.isAvailable(premium.model);
     // The premium model also joins the pool as a backup.
@@ -307,54 +357,83 @@ function createRouter({ targetHost, targetPort, log, getConfig, onFallback }) {
     } else {
       pick = { model: pool[0], reason: "" };
     }
-    if (config.balanced && category !== "quick") pick = upgradeIfExpiring(pick, category, exclude, config);
+    let boost = false;
+    if (config.balanced) {
+      pick = upgradeIfAhead(pick, category, exclude, config);
+      const pace = config.pace || DEFAULT_PACE;
+      // Quick tasks keep their normal effort so short replies stay fast.
+      boost = Boolean(pace.effortBoost && category !== "quick" && aheadOf(pick.model, config));
+    }
     // The rest of the pool stays as ordered backups behind the chosen model.
-    const choice = { category, role: roleName, model: pick.model, backups: pool.filter((item) => item !== pick.model), exclude };
-    sessions.set(key, choice);
-    if (sessions.size > 1000) sessions.delete(sessions.keys().next().value);
-    log(`Auto${roleName ? ` ${roleName}` : ""}: new session classified as ${category}; using ${choice.model}${pick.reason ? ` (${pick.reason})` : ""}`);
-    return choice;
+    return { category, role: roleName, model: pick.model, reason: pick.reason, boost, backups: pool.filter((item) => item !== pick.model), exclude, turns, pickedAt: Date.now() };
   }
 
-  // Walks the STRONGER chain while the model's subscription is expiring unused,
-  // so the session spends that quota on the best model it offers.
-  function upgradeIfExpiring(pick, category, exclude, config) {
-    const info = config.expiringFor?.(pick.model);
+  // Pace info for a model's plan when that plan is far enough ahead of pace
+  // (and its 5-hour window can take the work), else null.
+  function aheadOf(model, config) {
+    const pace = config.pace || DEFAULT_PACE;
+    if (!pace.enabled || isCooling(model)) return null;
+    const info = config.paceFor?.(model);
+    if (!info || info.surplus < pace.surplus) return null;
+    if (typeof info.shortLeft === "number" && info.shortLeft < SHORT_WINDOW_FLOOR) return null;
+    return info;
+  }
+
+  // Walks the STRONGER chain while the model's plan is ahead of pace, so the
+  // session spends that quota on the best model the plan offers.
+  function upgradeIfAhead(pick, category, exclude, config) {
+    const info = aheadOf(pick.model, config);
     if (!info) return pick;
     let model = pick.model;
-    for (let step = 0; step < 3; step += 1) {
+    for (let step = 0; step < (category === "quick" ? 1 : 3); step += 1) {
       const rule = STRONGER[model];
       const next = typeof rule === "string" ? rule : rule && !rule.except.includes(category) ? rule.model : null;
       if (!next || isExcluded(next, exclude) || isCooling(next) || !config.isAvailable(next)) break;
       model = next;
     }
     if (model === pick.model) return pick;
-    const reason = `${pick.reason ? `${pick.reason}; ` : ""}use it or lose it: ${Math.round(info.left)}% unused, resets in ${Math.round(info.hoursLeft)}h, upgraded ${pick.model} → ${model}`;
+    const reason = `${pick.reason ? `${pick.reason}; ` : ""}ahead of pace by ${Math.round(info.surplus)} pts (${Math.round(info.left)}% left, resets in ${formatHours(info.hoursLeft)}), upgraded ${pick.model} → ${model}`;
     return { model, reason };
   }
 
-  // Balanced: within a pool of comparable models, use the one whose
-  // subscription has the most quota left, so coding-heavy days drain every plan
-  // evenly instead of one. The usual pick keeps a small edge. When every
-  // subscription in the pool is low, pay-per-token overflow models take over.
+  // Balanced: rank the pool by how far each plan is ahead of its weekly pace,
+  // so quota that would reset unused is spent first and plans that are behind
+  // pace are saved. Without a weekly window, % left counts against a 50% mid.
+  // When every plan in the pool is low and none is ahead, overflow takes over.
   function pickBalanced(pool, overflow, config) {
     const scored = pool.map((model, index) => {
-      const left = isCooling(model) ? 0 : config.quotaFor(model);
-      const expiring = !isCooling(model) && Boolean(config.expiringFor?.(model));
-      return { model, left, expiring, score: (left ?? UNKNOWN_QUOTA) + (index === 0 ? PRIMARY_EDGE : 0) + (expiring ? EXPIRING_BONUS : 0) };
+      const bonus = POSITION_BONUS[index] || 0;
+      if (isCooling(model)) return { model, left: 0, surplus: null, ahead: false, score: -1000 + bonus };
+      const left = config.quotaFor(model);
+      const info = config.paceFor?.(model) || null;
+      const shortLeft = info && typeof info.shortLeft === "number" ? info.shortLeft : left;
+      let score = info ? info.surplus : left === null ? 0 : left - UNKNOWN_QUOTA;
+      if (left !== null && left < 1) score -= 1000;
+      else if (shortLeft !== null && shortLeft < SHORT_WINDOW_FLOOR) score -= 100;
+      return { model, left, surplus: info ? info.surplus : null, ahead: Boolean(aheadOf(model, config)), score: score + bonus };
     });
     const best = scored.reduce((top, item) => (item.score > top.score ? item : top), scored[0]);
-    const summary = scored.map((item) => `${item.model} ${item.left === null ? "?" : `${Math.round(item.left)}%`}${item.expiring ? " expiring" : ""}`).join(", ");
+    const summary = scored.map((item) => `${item.model} ${item.left === null ? "?" : `${Math.round(item.left)}%`}${item.surplus === null ? "" : ` ${item.surplus >= 0 ? "+" : ""}${Math.round(item.surplus)}`}`).join(", ");
     const known = scored.filter((item) => item.left !== null);
-    // Quota about to expire unused is never "low": spend it before overflowing.
-    const allLow = known.length > 0 && !scored.some((item) => item.expiring) && known.every((item) => item.left < config.overflowThreshold);
+    // Quota ahead of pace is never "low": spend it before overflowing.
+    const allLow = known.length > 0 && !scored.some((item) => item.ahead) && known.every((item) => item.left < config.overflowThreshold);
     const spare = (overflow || []).find((model) => config.isAvailable(model) && !isCooling(model));
     if (allLow && spare) return { model: spare, reason: `subscriptions low: ${summary}; overflow` };
-    return { model: best.model, reason: `balanced: ${summary}` };
+    return { model: best.model, reason: `pace: ${summary}` };
   }
 
+  // Sessions pinned to an exhausted model stay on the backup that served them
+  // instead of hitting the limit again after every cool-down.
   function reportFallback(from, to, until) {
-    log(`Backup: ${from} is out of quota${until ? ` until about ${until.toLocaleTimeString()}` : ""}; using ${to}`);
+    let moved = 0;
+    for (const session of sessions.values()) {
+      if (session.model !== from) continue;
+      session.backups = [from, ...session.backups.filter((item) => item !== to && item !== from)];
+      session.model = to;
+      session.pickedAt = Date.now();
+      moved += 1;
+    }
+    log(`Backup: ${from} is out of quota${until ? ` until about ${until.toLocaleTimeString()}` : ""}; using ${to}${moved ? ` (${moved} session${moved === 1 ? "" : "s"} moved)` : ""}`);
     if (onFallback) onFallback(from, to, until);
   }
 
@@ -362,6 +441,7 @@ function createRouter({ targetHost, targetPort, log, getConfig, onFallback }) {
 }
 
 module.exports = {
+  DEFAULT_PACE,
   DEFAULT_PREMIUM,
   DEFAULT_OVERFLOW_THRESHOLD,
   DEFAULT_OVERFLOW_MODELS,
@@ -379,5 +459,6 @@ module.exports = {
   createRouter,
   taskText,
   sessionKey,
+  userTurns,
   parseCategory
 };

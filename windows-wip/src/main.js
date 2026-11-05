@@ -23,6 +23,7 @@ const {
   DEFAULT_OVERFLOW_MODELS,
   DEFAULT_MISSION_OVERFLOW_MODELS,
   DEFAULT_PREMIUM,
+  DEFAULT_PACE,
   createRouter
 } = require("./router");
 const { API_PROVIDERS, apiModelId, providerRegion, providerModels, regionForKey, effortsForModel, apiKeysYaml } = require("./providers");
@@ -65,8 +66,9 @@ const DEFAULT_SETTINGS = {
   missionOverflowModels: DEFAULT_MISSION_OVERFLOW_MODELS,
   // Fable for chosen task types while Claude has plenty of quota.
   premium: DEFAULT_PREMIUM,
-  // Spend unused weekly/monthly quota on strong models before it resets.
-  expiringBoost: { enabled: true, hours: 24, minLeft: 30 },
+  // Pace boost: while a plan's weekly/monthly window is ahead of pace by
+  // `surplus` points, use its strongest models (at max effort if effortBoost).
+  pace: DEFAULT_PACE,
   fallbackEnabled: true,
   fallbackChains: DEFAULT_CHAINS,
   // { [providerKey]: { region, keyEnc } }; keys are encrypted with Windows DPAPI.
@@ -325,10 +327,11 @@ function sanitizeSettings(value) {
       threshold: Number.isFinite(Number(value.premium?.threshold)) ? Math.min(100, Math.max(0, Number(value.premium.threshold))) : DEFAULT_PREMIUM.threshold,
       categories: stringList(value.premium?.categories, DEFAULT_PREMIUM.categories).filter((category) => CATEGORIES[category])
     },
-    expiringBoost: {
-      enabled: value.expiringBoost?.enabled !== false,
-      hours: Number.isFinite(Number(value.expiringBoost?.hours)) ? Math.min(168, Math.max(1, Number(value.expiringBoost.hours))) : 24,
-      minLeft: Number.isFinite(Number(value.expiringBoost?.minLeft)) ? Math.min(100, Math.max(0, Number(value.expiringBoost.minLeft))) : 30
+    // Replaces the older 24-hour "expiringBoost" rule; its on/off carries over.
+    pace: {
+      enabled: (value.pace?.enabled ?? value.expiringBoost?.enabled) !== false,
+      surplus: Number.isFinite(Number(value.pace?.surplus)) ? Math.min(100, Math.max(0, Number(value.pace.surplus))) : DEFAULT_PACE.surplus,
+      effortBoost: value.pace?.effortBoost !== false
     },
     fallbackEnabled: value.fallbackEnabled !== false,
     fallbackChains: Object.fromEntries(Object.entries(value.fallbackChains || DEFAULT_CHAINS)
@@ -587,8 +590,9 @@ function getRouter() {
       overflowModels: settings.overflowModels,
       missionOverflowModels: settings.missionOverflowModels,
       premium: settings.premium,
+      pace: settings.pace,
       quotaFor,
-      expiringFor,
+      paceFor,
       isAvailable: (model) => modelOptions().some((item) => item.id === model)
     }),
     onFallback: (from, to, until) => {
@@ -886,27 +890,35 @@ async function refreshQuotaCache() {
     }
   }
   quotaCache = { buckets, short, long, failed, updatedAt: new Date().toISOString() };
-  const expiring = Object.keys(buckets).filter((bucket) => expiringInfo(bucket));
-  log(`Balanced routing quotas: ${Object.entries(buckets).map(([key, value]) => `${key} ${Math.round(value)}%`).join(", ") || "none available"}${expiring.length ? ` · expiring unused: ${expiring.join(", ")}` : ""}`);
+  const describe = ([key, value]) => {
+    const info = paceInfo(key);
+    return `${key} ${Math.round(value)}%${info ? ` (weekly ${Math.round(info.left)}%, ${info.surplus >= 0 ? "+" : ""}${Math.round(info.surplus)} vs pace${isAhead(info) ? ", boosting" : ""})` : ""}`;
+  };
+  log(`Balanced routing quotas: ${Object.entries(buckets).map(describe).join(", ") || "none available"}`);
   return quotaCache;
 }
 
-// "Use it or lose it": a long window resetting within `hours` with at least
-// `minLeft`% unused, and enough short-window headroom to actually spend it.
-function expiringInfo(bucket) {
-  const rule = settings.expiringBoost;
+// Weekly pace for a plan: % left in its long window against % of the window's
+// time left. surplus > 0 means quota that will reset unused at the current rate.
+function paceInfo(bucket) {
   const entry = quotaCache.long?.[bucket];
-  if (!rule?.enabled || !entry) return null;
+  if (!entry) return null;
   const hoursLeft = (Date.parse(entry.resetAt) - Date.now()) / 3600000;
+  if (!(hoursLeft > 0)) return null;
+  const windowHours = /month|30.?day/i.test(entry.title || "") ? 720 : 168;
+  const target = Math.min(100, (100 * hoursLeft) / windowHours);
   const shortLeft = quotaCache.short?.[bucket];
-  if (hoursLeft <= 0 || hoursLeft > rule.hours || entry.left < rule.minLeft) return null;
-  if (typeof shortLeft === "number" && shortLeft < 10) return null;
-  return { left: entry.left, hoursLeft, resetAt: entry.resetAt };
+  return { left: entry.left, hoursLeft, windowHours, target, surplus: entry.left - target, shortLeft: typeof shortLeft === "number" ? shortLeft : null, resetAt: entry.resetAt };
 }
 
-function expiringFor(model) {
+function isAhead(info) {
+  const rule = settings.pace;
+  return Boolean(rule?.enabled && info && info.surplus >= rule.surplus && (info.shortLeft === null || info.shortLeft >= 10));
+}
+
+function paceFor(model) {
   const bucket = quotaBucket(model);
-  return bucket ? expiringInfo(bucket) : null;
+  return bucket ? paceInfo(bucket) : null;
 }
 
 function fetchUsage(accountId) {
@@ -1056,11 +1068,23 @@ function parseUsageWindows(json) {
   const rateLimit = json?.rate_limit;
   if (rateLimit) {
     return [
-      usageWindow("5-hour", rateLimit.primary_window),
-      usageWindow("Weekly", rateLimit.secondary_window)
+      usageWindow(codexWindowTitle(rateLimit.primary_window, "5-hour"), rateLimit.primary_window),
+      usageWindow(codexWindowTitle(rateLimit.secondary_window, "Weekly"), rateLimit.secondary_window)
     ].filter(Boolean);
   }
   return [];
+}
+
+// Codex no longer always sends a 5-hour primary window (in Nov 2026 the
+// primary window is the 7-day one), so the title comes from its length.
+function codexWindowTitle(window, fallback) {
+  const seconds = numberValue(window?.limit_window_seconds);
+  if (typeof seconds !== "number" || seconds <= 0) return fallback;
+  const hours = seconds / 3600;
+  if (hours >= 24 * 28) return "Monthly";
+  if (hours >= 24 * 6) return "Weekly";
+  if (hours >= 24) return `${Math.round(hours / 24)}-day`;
+  return `${Math.round(hours)}-hour`;
 }
 
 function usageWindow(title, value) {
@@ -1361,8 +1385,14 @@ function routingState() {
     overflowModels: settings.overflowModels,
     missionOverflowModels: settings.missionOverflowModels,
     premium: settings.premium,
-    expiringBoost: settings.expiringBoost,
-    quotas: { ...quotaCache, expiring: Object.fromEntries(Object.keys(quotaCache.buckets || {}).map((bucket) => [bucket, expiringInfo(bucket)]).filter(([, info]) => info)) },
+    pace: settings.pace,
+    quotas: {
+      ...quotaCache,
+      pace: Object.fromEntries(Object.keys(quotaCache.buckets || {}).map((bucket) => {
+        const info = paceInfo(bucket);
+        return [bucket, info && { ...info, ahead: isAhead(info) }];
+      }).filter(([, info]) => info))
+    },
     models: modelOptions(),
     cooling
   };
@@ -1461,7 +1491,7 @@ ipcMain.handle("routing:save", (_event, next) => {
     overflowModels: next.overflowModels,
     missionOverflowModels: next.missionOverflowModels,
     premium: next.premium,
-    expiringBoost: next.expiringBoost
+    pace: next.pace
   });
   return routingState();
 });

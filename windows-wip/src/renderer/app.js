@@ -131,10 +131,10 @@ function renderRouting(state) {
   document.querySelector("#overflow-selects").innerHTML = overflowSelects("overflow", state.overflowModels, 3);
   document.querySelector("#mission-overflow-selects").innerHTML = overflowSelects("mission-overflow", state.missionOverflowModels, 3);
 
-  const boost = state.expiringBoost || {};
-  document.querySelector("#expiring-enabled").checked = boost.enabled !== false;
-  document.querySelector("#expiring-hours").value = boost.hours ?? 24;
-  document.querySelector("#expiring-min-left").value = boost.minLeft ?? 30;
+  const pace = state.pace || {};
+  document.querySelector("#pace-enabled").checked = pace.enabled !== false;
+  document.querySelector("#pace-surplus").value = pace.surplus ?? 15;
+  document.querySelector("#pace-effort").checked = pace.effortBoost !== false;
 
   const premium = state.premium || {};
   document.querySelector("#premium-enabled").checked = premium.enabled !== false;
@@ -157,11 +157,13 @@ function renderQuotas(state) {
   const entries = Object.entries(state.quotas?.buckets || {});
   document.querySelector("#quota-snapshot").innerHTML = entries.length
     ? entries.map(([bucket, left]) => {
-      const expiring = state.quotas.expiring?.[bucket];
+      const pace = state.quotas.pace?.[bucket];
       const label = `${escapeHtml(QUOTA_LABELS[bucket] || bucket)} ${Math.round(left)}% left`;
-      return expiring
-        ? `<span class="quota-pill expiring" title="Weekly/monthly window resets soon with quota unused">${label} · ${Math.round(expiring.left)}% unused, resets in ${Math.round(expiring.hoursLeft)}h → boosting</span>`
-        : `<span class="quota-pill ${left < state.overflowThreshold ? "low" : ""}">${label}</span>`;
+      if (!pace) return `<span class="quota-pill ${left < state.overflowThreshold ? "low" : ""}">${label}</span>`;
+      const hours = pace.hoursLeft >= 48 ? `${Math.round(pace.hoursLeft / 24)}d` : `${Math.round(pace.hoursLeft)}h`;
+      const surplus = `${pace.surplus >= 0 ? "+" : ""}${Math.round(pace.surplus)}`;
+      const title = `Weekly window: ${Math.round(pace.left)}% left with ${Math.round((100 * pace.hoursLeft) / pace.windowHours)}% of the time left, so ${surplus} points vs an even pace`;
+      return `<span class="quota-pill ${pace.ahead ? "expiring" : left < state.overflowThreshold ? "low" : ""}" title="${escapeHtml(title)}">${label} · weekly ${Math.round(pace.left)}%, resets in ${hours} · ${surplus} vs pace${pace.ahead ? " → boosting" : ""}</span>`;
     }).join("")
       + (state.quotas.updatedAt ? `<span class="usage-note">updated ${new Date(state.quotas.updatedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>` : "")
     : `<span class="usage-note">Reading subscription quotas…</span>`;
@@ -200,10 +202,10 @@ function collectRouting() {
     overflowThreshold: Number(document.querySelector("#overflow-threshold").value),
     overflowModels: pickList("#overflow-selects"),
     missionOverflowModels: pickList("#mission-overflow-selects"),
-    expiringBoost: {
-      enabled: document.querySelector("#expiring-enabled").checked,
-      hours: Number(document.querySelector("#expiring-hours").value),
-      minLeft: Number(document.querySelector("#expiring-min-left").value)
+    pace: {
+      enabled: document.querySelector("#pace-enabled").checked,
+      surplus: Number(document.querySelector("#pace-surplus").value),
+      effortBoost: document.querySelector("#pace-effort").checked
     },
     premium: {
       enabled: document.querySelector("#premium-enabled").checked,

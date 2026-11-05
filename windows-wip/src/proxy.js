@@ -130,13 +130,40 @@ function normalizeEffort(body, supported) {
   return changed;
 }
 
+// Pace boost: raise the reasoning the request already asks for to the model's
+// top level (and the Anthropic thinking budget to half of max_tokens, up to
+// 64k). Only fields that are present are changed. Returns true when changed.
+const BOOST_THINKING_BUDGET = 64000;
+function boostEffort(body, supported) {
+  let changed = false;
+  const top = Array.isArray(supported) && supported.length ? supported[supported.length - 1] : null;
+  const raise = (holder, key) => {
+    if (!top || typeof holder?.[key] !== "string" || holder[key] === top) return;
+    holder[key] = top;
+    changed = true;
+  };
+  raise(body, "reasoning_effort");
+  raise(body.reasoning, "effort");
+  raise(body.output_config, "effort");
+  const thinking = body.thinking;
+  if (thinking?.type === "enabled" && Number.isFinite(thinking.budget_tokens) && Number.isFinite(body.max_tokens)) {
+    const budget = Math.min(BOOST_THINKING_BUDGET, Math.floor(body.max_tokens / 2));
+    if (budget > thinking.budget_tokens) {
+      thinking.budget_tokens = budget;
+      changed = true;
+    }
+  }
+  return changed;
+}
+
 // Builds the upstream body for one attempt. `raw` is reused untouched when
 // nothing changes so Anthropic prompt-cache key ordering is preserved.
-function prepareBody(headers, raw, model, { includeUsage = false, efforts = null } = {}) {
+function prepareBody(headers, raw, model, { includeUsage = false, efforts = null, boost = false } = {}) {
   const body = JSON.parse(raw.toString("utf8"));
   let changed = body.model !== model;
   body.model = ANTIGRAVITY_MODEL_ALIASES[model] || model;
   changed = changed || body.model !== model;
+  if (boost) changed = boostEffort(body, efforts) || changed;
   changed = normalizeEffort(body, efforts) || changed;
 
   // Streamed Chat Completions only report token usage when asked.
@@ -210,11 +237,13 @@ function createFrontProxy({ targetHost, targetPort, log, router = null, usageTra
       let primary = parsed.model;
       let roleBackups = [];
       let exclude = [];
+      let boost = false;
       if (router && isAutoModel(primary)) {
         const choice = await router.resolveAuto(baseHeaders, parsed, primary);
         primary = choice.model;
         roleBackups = choice.backups;
         exclude = choice.exclude || [];
+        boost = Boolean(choice.boost);
       }
       const candidates = router ? router.candidatesFor(primary, roleBackups, exclude) : [primary];
 
@@ -226,7 +255,7 @@ function createFrontProxy({ targetHost, targetPort, log, router = null, usageTra
         if (tracked) delete headers["accept-encoding"];
         let upstreamRes;
         try {
-          upstreamRes = await sendUpstream(target, req, headers, prepareBody(headers, raw, model, { includeUsage: tracked && req.url.includes("/chat/completions"), efforts: effortsFor(model) }));
+          upstreamRes = await sendUpstream(target, req, headers, prepareBody(headers, raw, model, { includeUsage: tracked && req.url.includes("/chat/completions"), efforts: effortsFor(model), boost }));
         } catch (error) {
           failUpstream(res, error);
           return;
@@ -253,4 +282,4 @@ function createFrontProxy({ targetHost, targetPort, log, router = null, usageTra
   });
 }
 
-module.exports = { createFrontProxy, sanitizeThinkingBlocks, rewriteAnthropicBeta, prepareBody, nearestEffort };
+module.exports = { createFrontProxy, sanitizeThinkingBlocks, rewriteAnthropicBeta, prepareBody, nearestEffort, boostEffort };

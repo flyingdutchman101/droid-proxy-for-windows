@@ -177,18 +177,15 @@
           <span>Balanced routing</span>
           <label class="check-row"><input id="balanced-enabled" type="checkbox" /> Enabled</label>
         </div>
-        <p class="card-note">Each new Auto session uses whichever model in its pool (the task type's model plus its backups) has the most subscription quota left, so heavy coding drains every plan evenly. When every subscription in the pool is below the threshold, the session goes to your pay-per-token overflow models.</p>
+        <p class="card-note">Each Auto session uses the model in its pool (the task type's model plus its backups) whose plan is furthest ahead of its weekly pace: the plan with the most quota that would otherwise reset unused goes first, and plans running behind are saved. Sessions are re-checked on your next message every 15 minutes, and sessions that started as "quick" are re-classified once real work arrives. When every plan in the pool is below the threshold and none is ahead of pace, the session goes to your pay-per-token overflow models.</p>
         <div id="quota-snapshot" class="quota-snapshot"></div>
         <div class="premium-block">
-          <label class="check-row"><input id="expiring-enabled" type="checkbox" /> Use it or lose it: spend weekly/monthly quota on the strongest models before it resets</label>
+          <label class="check-row"><input id="pace-enabled" type="checkbox" /> Spend ahead of reset: when a plan's weekly quota is ahead of pace, move sessions to its strongest models</label>
           <div class="routing-row">
-            <span class="routing-label">When resetting in</span>
-            <div class="threshold-input"><input id="expiring-hours" type="number" min="1" max="168" step="1" /> <span>hours or less</span></div>
+            <span class="routing-label">Ahead of pace by ≥</span>
+            <div class="threshold-input"><input id="pace-surplus" type="number" min="0" max="100" step="5" /> <span>points (% left minus % of the week left)</span></div>
           </div>
-          <div class="routing-row">
-            <span class="routing-label">And unused ≥</span>
-            <div class="threshold-input"><input id="expiring-min-left" type="number" min="0" max="100" step="5" /> <span>% of the window</span></div>
-          </div>
+          <label class="check-row"><input id="pace-effort" type="checkbox" /> Also raise reasoning effort to the model's maximum while boosting</label>
         </div>
         <div class="premium-block">
           <label class="check-row"><input id="premium-enabled" type="checkbox" /> Premium model while its quota is plentiful</label>
