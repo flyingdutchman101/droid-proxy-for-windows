@@ -643,6 +643,138 @@ api.onMediaCollected((item) => {
 });
 api.veoState().then(renderVeoState).catch(() => {});
 
+
+// Workstream manager.
+let managerInfo = null;
+
+function managerModelOptions(models, selected) {
+  const list = models.some((model) => model.id === selected) || !selected ? models : [{ id: selected, label: selected }, ...models];
+  return list.map((model) => `<option value="${escapeHtml(model.id)}" ${model.id === selected ? "selected" : ""}>${escapeHtml(model.label)}</option>`).join("");
+}
+
+function timeAgo(iso) {
+  if (!iso) return "";
+  const minutes = Math.round((Date.now() - Date.parse(iso)) / 60000);
+  if (minutes < 60) return `${Math.max(0, minutes)}m ago`;
+  if (minutes < 48 * 60) return `${Math.round(minutes / 60)}h ago`;
+  return `${Math.round(minutes / 1440)}d ago`;
+}
+
+function retroSummary(retro) {
+  if (!retro) return "No self-review yet.";
+  if (!retro.ok) return `Last self-review ${timeAgo(retro.at)} failed (${(retro.error || "").slice(0, 160)}).`;
+  const parts = [`${retro.added || 0} lesson(s) added`, `${retro.retired || 0} retired`];
+  if (retro.newVersion) parts.push(`prompt v${retro.newVersion}`);
+  return `Last self-review ${timeAgo(retro.at)}: ${parts.join(", ")}.${retro.rollback ? ` ${retro.rollback}` : ""}`;
+}
+
+function renderManager(state) {
+  managerInfo = state;
+  const cfg = state.config;
+  const status = state.status;
+  document.querySelector("#manager-enabled").checked = Boolean(cfg.enabled);
+  document.querySelector("#manager-install").innerHTML = status.installed
+    ? `<span class="auth-badge">Hooks installed</span><span class="muted">Factory guard ${escapeHtml(status.guard)}</span><button id="mgr-uninstall" class="small">Remove hooks</button>`
+    : `<span class="muted">Not installed. Installing adds the manager hook to Factory (hooks.json) and lets it answer approvals in managed Workstreams; backups are kept.</span><button id="mgr-install" class="primary small">Install hooks</button>`;
+
+  document.querySelector("#manager-workstreams").innerHTML = state.workstreams.length
+    ? state.workstreams.map((ws) => `
+      <label class="manager-ws ${ws.managed ? "on" : ""}">
+        <input type="checkbox" data-space="${escapeHtml(ws.id)}" ${ws.managed ? "checked" : ""} />
+        <span class="manager-ws-title">${escapeHtml(ws.title)}</span>
+        <span class="muted">${ws.sessions} sessions · ${escapeHtml(timeAgo(ws.updatedAt))}</span>
+      </label>`).join("")
+    : `<span class="muted">No Workstreams found. Start one in the Factory app, then reopen this card.</span>`;
+
+  document.querySelector("#mgr-continuations").value = cfg.limits.continuationsPerDay;
+  document.querySelector("#mgr-merges").value = cfg.limits.mergesPerDay;
+  document.querySelector("#mgr-deploys").value = cfg.limits.deploysPerDay;
+  document.querySelector("#mgr-reviewer-0").innerHTML = managerModelOptions(state.models, cfg.reviewers[0]);
+  document.querySelector("#mgr-reviewer-1").innerHTML = managerModelOptions(state.models, cfg.reviewers[1]);
+  document.querySelector("#mgr-retro-model").innerHTML = managerModelOptions(state.models, cfg.retroModel);
+  document.querySelector("#mgr-retro-hour").value = cfg.retroHour;
+  const deployList = document.querySelector("#mgr-deploy-list");
+  if (document.activeElement !== deployList) deployList.value = cfg.deployCommands.join("\n");
+
+  const week = state.week;
+  const versions = state.prompt.versions.map((v) => `<li>v${v.version} · ${escapeHtml(v.origin || "")} · ${escapeHtml(new Date(v.since).toLocaleDateString())}${v.rolledBack ? " · rolled back" : ""} · score ${v.score}</li>`).join("");
+  const lessonItems = state.lessons.map((lesson) => `<li>${escapeHtml(lesson.text)}</li>`).join("") || `<li class="muted">None yet.</li>`;
+  document.querySelector("#manager-improve").innerHTML = `
+    <div class="manager-stats">
+      <span class="quota-pill">Prompt v${state.prompt.version}</span>
+      <span class="quota-pill">7 days: ${week.merges} merged · ${week.deploys} deployed</span>
+      <span class="quota-pill">reviews ${week.reviewsApproved} ✓ / ${week.reviewsRejected} ✗</span>
+      <span class="quota-pill ${week.denials ? "low" : ""}">${week.denials} blocked</span>
+      ${state.pendingReviews ? `<span class="quota-pill expiring">${state.pendingReviews} review(s) running</span>` : ""}
+    </div>
+    <p class="card-note">${escapeHtml(retroSummary(state.lastRetro))}</p>
+    <details><summary>Current prompt (v${state.prompt.version})</summary><pre class="manager-pre">${escapeHtml(state.prompt.text)}</pre><ul class="manager-versions">${versions}</ul></details>
+    <details><summary>Lessons (${state.lessons.length})</summary><ul class="manager-lessons">${lessonItems}</ul></details>
+    <div class="card-actions"><button id="mgr-retro" class="small">Run self-review now</button></div>`;
+
+  document.querySelector("#manager-activity").innerHTML = state.activity.length
+    ? state.activity.map((item) => `<div class="manager-activity-row">${escapeHtml(item.text)}${item.space ? ` <span class="muted">· ${escapeHtml(item.space)}</span>` : ""}</div>`).join("")
+    : `<span class="muted">Nothing yet.</span>`;
+}
+
+async function refreshManager() {
+  try {
+    renderManager(await api.managerState());
+  } catch (error) {
+    showToast(cleanIpcError(error));
+  }
+}
+
+async function managerAction(task, message) {
+  try {
+    const result = await task();
+    renderManager(result.state || result);
+    if (message) showToast(typeof message === "function" ? message(result) : message);
+  } catch (error) {
+    showToast(cleanIpcError(error));
+    refreshManager();
+  }
+}
+
+document.querySelector("#manager-card").addEventListener("click", (event) => {
+  const id = event.target.id;
+  if (id === "mgr-install") managerAction(() => api.installManager(), "Manager hooks installed.");
+  if (id === "mgr-uninstall") managerAction(() => api.uninstallManager(), "Manager hooks removed; your normal approvals are back.");
+  if (id === "mgr-retro") {
+    event.target.disabled = true;
+    event.target.textContent = "Reviewing… (a few minutes)";
+    managerAction(() => api.runRetrospective(), (result) => result.result?.message || "Self-review finished.");
+  }
+});
+document.querySelector("#manager-workstreams").addEventListener("change", (event) => {
+  if (!event.target.dataset.space || !managerInfo) return;
+  const spaces = [...document.querySelectorAll("#manager-workstreams input[data-space]")].filter((input) => input.checked).map((input) => input.dataset.space);
+  managerAction(() => api.saveManager({ spaces }), event.target.checked ? "Workstream added to the manager." : "Workstream removed from the manager.");
+});
+document.querySelector("#manager-enabled").addEventListener("change", async (event) => {
+  const enabled = event.target.checked;
+  if (enabled && !managerInfo?.status.installed) await managerAction(() => api.installManager());
+  managerAction(() => api.saveManager({ enabled }), enabled
+    ? (managerInfo?.config.spaces.length ? "Manager running." : "Manager running. Tick the Workstreams it should drive.")
+    : "Manager stopped. Your normal approval prompts are back.");
+});
+document.querySelector("#mgr-save").addEventListener("click", () => managerAction(() => api.saveManager({
+  limits: {
+    continuationsPerDay: document.querySelector("#mgr-continuations").value,
+    mergesPerDay: document.querySelector("#mgr-merges").value,
+    deploysPerDay: document.querySelector("#mgr-deploys").value
+  },
+  reviewers: [document.querySelector("#mgr-reviewer-0").value, document.querySelector("#mgr-reviewer-1").value],
+  retroModel: document.querySelector("#mgr-retro-model").value,
+  retroHour: Number(document.querySelector("#mgr-retro-hour").value),
+  deployCommands: document.querySelector("#mgr-deploy-list").value.split("\n")
+}), "Manager settings saved."));
+document.querySelector("#mgr-folder").addEventListener("click", () => api.openManagerFolder());
+refreshManager();
+setInterval(() => {
+  if (!document.querySelector("#manager-card details[open]")) refreshManager();
+}, 60 * 1000);
+
 async function boot() {
   setSettingsForm(await api.getSettings());
   renderProxyState(await api.proxyState());

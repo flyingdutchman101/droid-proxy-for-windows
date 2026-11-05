@@ -163,6 +163,36 @@
         <div id="usage-list" class="list muted">Connect an account to display quota windows.</div>
       </section>
 
+      <section class="section-card" id="manager-card">
+        <div class="card-title">
+          <span>Workstream manager</span>
+          <label class="check-row manager-switch"><input id="manager-enabled" type="checkbox" /> Running</label>
+        </div>
+        <p class="card-note">Keeps the Workstreams you enable going around the clock: when an orchestrator stops, the manager hands it the next instruction. Merges need green CI plus two independent reviews; deploys run only allowed commands from a clean, green base branch. Each night it reviews its results, adds lessons and may rewrite its own prompt, rolling back versions that do worse. Turning it off stops it at the next step and brings back your normal approval prompts.</p>
+        <div id="manager-install" class="manager-install"></div>
+        <div class="media-heading">Workstreams</div>
+        <div id="manager-workstreams" class="manager-list"><span class="muted">Loading…</span></div>
+        <div class="media-heading">Limits and gates</div>
+        <div class="media-grid">
+          <label>Continues per day<input id="mgr-continuations" type="number" min="0" /></label>
+          <label>Merges per day<input id="mgr-merges" type="number" min="0" /></label>
+          <label>Deploys per day<input id="mgr-deploys" type="number" min="0" /></label>
+          <label>Reviewer 1<select id="mgr-reviewer-0"></select></label>
+          <label>Reviewer 2 (other family)<select id="mgr-reviewer-1"></select></label>
+          <label>Self-improvement model<select id="mgr-retro-model"></select></label>
+          <label>Nightly self-review (hour)<input id="mgr-retro-hour" type="number" min="0" max="23" /></label>
+          <label class="wide">Allowed deploy commands (one per line, text or regex; nothing else deploys)<textarea id="mgr-deploy-list" rows="3" placeholder="npm run deploy&#10;vercel deploy --prod"></textarea></label>
+        </div>
+        <div class="card-actions">
+          <button id="mgr-folder" class="small">Open folder</button>
+          <button id="mgr-save" class="primary">Save</button>
+        </div>
+        <div class="media-heading">Self-improvement</div>
+        <div id="manager-improve" class="manager-improve"></div>
+        <div class="media-heading">Activity</div>
+        <div id="manager-activity" class="manager-activity"></div>
+      </section>
+
       <section class="section-card">
         <div class="card-title">
           <span>Auto routing</span>

@@ -29,6 +29,7 @@ const {
 const { API_PROVIDERS, apiModelId, providerRegion, providerModels, regionForKey, effortsForModel, apiKeysYaml } = require("./providers");
 const { createUsageTracker } = require("./usage");
 const { pathToFileURL } = require("url");
+const { createManager } = require("./manager/manager");
 const { createMedia, TTS_MODELS, VIDEO_MODELS, VOICES, ASPECT_RATIOS, RESOLUTIONS } = require("./media");
 
 const APP_NAME = "VeryCuteDroidProxy";
@@ -1327,6 +1328,7 @@ if (!hasInstanceLock) {
     createWindow();
     // Factory can't reach the custom models until the proxy is up, so start it right away.
     startProxy().catch((error) => log(`Auto-start failed: ${error.message}`));
+    getManager().start();
     // The backend renews expired OAuth tokens only once it runs, so give it a
     // minute before the first quota read, and retry soon if a plan is missing.
     setTimeout(ensureApiKeysInConfig, 15 * 1000);
@@ -1554,6 +1556,42 @@ function mediaState() {
     outputDir: MEDIA_DIR
   };
 }
+
+// Workstream manager: keeps enabled Factory Workstreams going unattended,
+// gates merges and deploys, and improves its own prompt and lessons nightly.
+let manager = null;
+function getManager() {
+  if (!manager) manager = createManager({ log });
+  return manager;
+}
+function managerState() {
+  return {
+    ...getManager().state(),
+    models: modelOptions().map((item) => ({ id: factoryModelId(item.id), label: item.label }))
+  };
+}
+ipcMain.handle("manager:state", () => managerState());
+ipcMain.handle("manager:save", (_event, next) => {
+  getManager().saveConfig(next || {});
+  return managerState();
+});
+ipcMain.handle("manager:install", () => {
+  getManager().install();
+  return managerState();
+});
+ipcMain.handle("manager:uninstall", () => {
+  getManager().saveConfig({ enabled: false });
+  getManager().uninstall();
+  return managerState();
+});
+ipcMain.handle("manager:retro", async () => {
+  const result = await getManager().retrospective("manual");
+  return { result, state: managerState() };
+});
+ipcMain.handle("manager:openFolder", () => {
+  ensureDir(getManager().folder);
+  shell.openPath(getManager().folder);
+});
 
 ipcMain.handle("media:state", () => mediaState());
 ipcMain.handle("media:setKey", (_event, apiKey) => {

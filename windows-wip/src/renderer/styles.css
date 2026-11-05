@@ -923,3 +923,114 @@ label {
 .veo-status:empty {
   display: none;
 }
+
+/* Workstream manager */
+.manager-switch {
+  font-size: 12px;
+}
+
+.manager-install {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  margin-bottom: 4px;
+}
+
+.manager-install button {
+  margin-left: auto;
+}
+
+.manager-list {
+  display: grid;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+
+.manager-ws {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.manager-ws.on {
+  border-color: rgba(242, 123, 47, 0.55);
+  background: rgba(242, 123, 47, 0.08);
+}
+
+.manager-ws input {
+  width: auto;
+  min-height: 0;
+}
+
+.manager-ws-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.media-grid textarea {
+  width: 100%;
+  min-height: 56px;
+  resize: vertical;
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  padding: 6px 8px;
+  background: rgba(0, 0, 0, 0.32);
+  color: var(--text);
+  font: 12px "Cascadia Mono", Consolas, monospace;
+}
+
+.manager-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.manager-improve details {
+  margin: 6px 0;
+  font-size: 12px;
+}
+
+.manager-improve summary {
+  cursor: pointer;
+  color: var(--muted);
+}
+
+.manager-pre {
+  max-height: 260px;
+  overflow: auto;
+  white-space: pre-wrap;
+  padding: 8px;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.32);
+}
+
+.manager-lessons,
+.manager-versions {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 4px;
+}
+
+.manager-activity {
+  display: grid;
+  gap: 2px;
+  max-height: 220px;
+  overflow: auto;
+  font-size: 12px;
+}
+
+.manager-activity-row {
+  padding: 3px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+}
