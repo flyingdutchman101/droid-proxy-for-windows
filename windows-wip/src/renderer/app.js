@@ -519,6 +519,95 @@ api.onProxyState((state) => {
 api.onLogs(renderLogs);
 api.onAccountsChanged(() => refreshAccounts().then(refreshUsage));
 
+// Voice & video (Google Gemini API key, separate from the chat providers).
+function fillSelect(selector, items, value, label) {
+  const select = document.querySelector(selector);
+  const current = select.value || value;
+  select.innerHTML = items.map((item) => {
+    const id = typeof item === "string" ? item : item.id || item.name;
+    return `<option value="${escapeHtml(id)}" ${id === current ? "selected" : ""}>${escapeHtml(label(item))}</option>`;
+  }).join("");
+}
+
+function renderMedia(state) {
+  fillSelect("#tts-voice", state.voices, "Kore", (voice) => `${voice.name} · ${voice.style}`);
+  fillSelect("#tts-model", state.ttsModels, state.ttsModels[0].id, (model) => model.label);
+  fillSelect("#video-model", state.videoModels, state.videoModels[0].id, (model) => model.label);
+  fillSelect("#video-aspect", state.aspectRatios, "16:9", (ratio) => (ratio === "16:9" ? "16:9 landscape" : "9:16 portrait"));
+  fillSelect("#video-resolution", state.resolutions, "720p", (resolution) => resolution);
+  document.querySelector("#media-key-row").classList.toggle("connected", state.configured);
+  document.querySelector("#media-key").placeholder = state.configured ? "Key saved (enter a new one to replace)" : "API key";
+  document.querySelector("#media-key-clear").hidden = !state.configured;
+  document.querySelector("#media-key-status").innerHTML = state.configured
+    ? `<div class="authorized"><span class="auth-badge">Authorized</span><span class="auth-email">API key saved</span></div>`
+    : `<div class="authorized none">No key</div>`;
+}
+
+function showMediaResult(selector, result, tag) {
+  const box = document.querySelector(selector);
+  const name = result.file.split(/[\\/]/).pop();
+  box.hidden = false;
+  box.innerHTML = `
+    <${tag} controls ${tag === "video" ? "playsinline" : "autoplay"} src="${escapeHtml(result.url)}"></${tag}>
+    <button class="small file-link">Show ${escapeHtml(name)}</button>`;
+  box.querySelector(".file-link").addEventListener("click", () => api.showMediaFile(result.file));
+}
+
+async function runMedia(button, busyText, task) {
+  const label = button.textContent;
+  button.disabled = true;
+  button.textContent = busyText;
+  try {
+    await task();
+  } catch (error) {
+    showToast(cleanIpcError(error));
+  } finally {
+    button.disabled = false;
+    button.textContent = label;
+  }
+}
+
+document.querySelector("#media-key-save").addEventListener("click", async () => {
+  try {
+    const input = document.querySelector("#media-key");
+    renderMedia(await api.setMediaKey(input.value));
+    input.value = "";
+    showToast("Google Gemini API key saved.");
+  } catch (error) {
+    showToast(cleanIpcError(error));
+  }
+});
+document.querySelector("#media-key-clear").addEventListener("click", async () => {
+  renderMedia(await api.clearMediaKey());
+  showToast("Google Gemini API key removed.");
+});
+document.querySelector("#media-folder-btn").addEventListener("click", () => api.openMediaFolder());
+
+document.querySelector("#tts-btn").addEventListener("click", (event) => runMedia(event.currentTarget, "Generating…", async () => {
+  const result = await api.speak({
+    text: document.querySelector("#tts-text").value,
+    voice: document.querySelector("#tts-voice").value,
+    model: document.querySelector("#tts-model").value,
+    style: document.querySelector("#tts-style").value
+  });
+  showMediaResult("#tts-result", result, "audio");
+}));
+
+document.querySelector("#video-btn").addEventListener("click", (event) => {
+  const resolution = document.querySelector("#video-resolution").value;
+  const note = resolution === "720p" ? "about $0.10 per second" : "a per-second price that depends on the resolution";
+  if (!window.confirm(`Generate a ${resolution} video? It is billed to your Google Cloud account at ${note}.`)) return;
+  runMedia(event.currentTarget, "Generating… (can take a few minutes)", async () => {
+    const result = await api.generateVideo({
+      prompt: document.querySelector("#video-prompt").value,
+      model: document.querySelector("#video-model").value,
+      aspectRatio: document.querySelector("#video-aspect").value,
+      resolution
+    });
+    showMediaResult("#video-result", result, "video");
+  });
+});
+
 async function boot() {
   setSettingsForm(await api.getSettings());
   renderProxyState(await api.proxyState());
@@ -529,4 +618,6 @@ async function boot() {
   await refreshUsage();
 }
 
+// Loaded on its own so a failure elsewhere in boot never leaves it empty.
+api.mediaState().then(renderMedia).catch((error) => showToast(cleanIpcError(error)));
 boot().catch((error) => showToast(error.message || String(error)));

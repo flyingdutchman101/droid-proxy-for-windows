@@ -27,6 +27,8 @@ const {
 } = require("./router");
 const { API_PROVIDERS, apiModelId, providerRegion, providerModels, regionForKey, effortsForModel, apiKeysYaml } = require("./providers");
 const { createUsageTracker } = require("./usage");
+const { pathToFileURL } = require("url");
+const { createMedia, TTS_MODELS, VIDEO_MODELS, VOICES, ASPECT_RATIOS, RESOLUTIONS } = require("./media");
 
 const APP_NAME = "VeryCuteDroidProxy";
 const APP_USER_MODEL_ID = "io.automaze.droidproxy.windows";
@@ -68,7 +70,9 @@ const DEFAULT_SETTINGS = {
   fallbackEnabled: true,
   fallbackChains: DEFAULT_CHAINS,
   // { [providerKey]: { region, keyEnc } }; keys are encrypted with Windows DPAPI.
-  apiProviders: {}
+  apiProviders: {},
+  // Google Gemini API key for voice and video generation (not a chat upstream).
+  googleMedia: {}
 };
 
 // Auth file `type` -> login flag. Gemini goes through Google Antigravity OAuth,
@@ -332,7 +336,8 @@ function sanitizeSettings(value) {
       .map(([model, chain]) => [model, stringList(chain, []).filter((item) => item !== model).slice(0, 6)])),
     apiProviders: Object.fromEntries(Object.entries(value.apiProviders || {})
       .filter(([key, entry]) => API_PROVIDERS[key] && typeof entry?.keyEnc === "string" && entry.keyEnc)
-      .map(([key, entry]) => [key, { region: providerRegionKey(key, entry.region), keyEnc: entry.keyEnc }]))
+      .map(([key, entry]) => [key, { region: providerRegionKey(key, entry.region), keyEnc: entry.keyEnc }])),
+    googleMedia: typeof value.googleMedia?.keyEnc === "string" && value.googleMedia.keyEnc ? { keyEnc: value.googleMedia.keyEnc } : {}
   };
 }
 
@@ -1492,6 +1497,59 @@ ipcMain.handle("apikeys:clear", (_event, provider) => {
   log(`API key removed for ${API_PROVIDERS[provider]?.label || provider}`);
   return apiProviderState();
 });
+// Voice and video generation with a Google Gemini API key (AI Studio). The
+// Google AI Ultra sign-in does not cover these API models.
+const MEDIA_DIR = path.join(app.getPath("documents"), "VeryCuteDroidProxy");
+let media = null;
+function getMedia() {
+  if (!media) {
+    media = createMedia({
+      fetchImpl: httpFetch,
+      getApiKey: () => (settings.googleMedia.keyEnc ? decryptSecret(settings.googleMedia.keyEnc) : ""),
+      outputDir: MEDIA_DIR,
+      log
+    });
+  }
+  return media;
+}
+
+function mediaState() {
+  return {
+    configured: Boolean(settings.googleMedia.keyEnc && decryptSecret(settings.googleMedia.keyEnc)),
+    ttsModels: TTS_MODELS,
+    videoModels: VIDEO_MODELS,
+    voices: VOICES,
+    aspectRatios: ASPECT_RATIOS,
+    resolutions: RESOLUTIONS,
+    outputDir: MEDIA_DIR
+  };
+}
+
+ipcMain.handle("media:state", () => mediaState());
+ipcMain.handle("media:setKey", (_event, apiKey) => {
+  const key = String(apiKey || "").trim();
+  if (!key) throw new Error("Enter an API key first.");
+  saveSettings({ googleMedia: { keyEnc: encryptSecret(key) } });
+  log("Google Gemini API key saved for voice and video");
+  return mediaState();
+});
+ipcMain.handle("media:clearKey", () => {
+  saveSettings({ googleMedia: {} });
+  log("Google Gemini API key removed");
+  return mediaState();
+});
+const withUrl = (result) => ({ ...result, url: pathToFileURL(result.file).href });
+ipcMain.handle("media:speak", async (_event, options) => withUrl(await getMedia().speak(options || {})));
+ipcMain.handle("media:video", async (_event, options) => withUrl(await getMedia().video(options || {})));
+ipcMain.handle("media:openFolder", () => {
+  ensureDir(MEDIA_DIR);
+  shell.openPath(MEDIA_DIR);
+});
+ipcMain.handle("media:showFile", (_event, file) => {
+  const resolved = path.resolve(String(file || ""));
+  if (path.dirname(resolved) === MEDIA_DIR && fs.existsSync(resolved)) shell.showItemInFolder(resolved);
+});
+
 ipcMain.handle("paths:openAuth", () => {
   ensureDir(AUTH_DIR);
   shell.openPath(AUTH_DIR);

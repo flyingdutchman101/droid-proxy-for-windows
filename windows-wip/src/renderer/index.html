@@ -85,6 +85,59 @@
 
       <section class="section-card">
         <div class="card-title">
+          <span>Voice &amp; video</span>
+          <button id="media-folder-btn" class="icon-only" title="Open the output folder">
+            <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+              <path fill="currentColor" d="M10 4H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-8l-2-2z"/>
+            </svg>
+          </button>
+        </div>
+        <p class="card-note">Google's speech and video models through the Gemini API. They are not part of the Google AI Ultra sign-in, so they need an API key from Google AI Studio (aistudio.google.com/apikey). Speech has a free tier; video is paid only. Files are saved to Documents\VeryCuteDroidProxy.</p>
+        <div class="provider api" id="media-key-row">
+          <div class="provider-head">
+            <img class="provider-logo" src="icons/gemini.png" alt="" />
+            <span class="provider-name">Google Gemini API <small>Gemini 3.8 Flash TTS, Gemini Omni 1.1 Flash</small></span>
+          </div>
+          <div class="api-controls">
+            <input id="media-key" type="password" placeholder="API key" autocomplete="off" spellcheck="false" />
+            <button id="media-key-save" class="primary small">Save</button>
+            <button id="media-key-clear" class="small" hidden>Remove</button>
+          </div>
+          <div class="provider-accounts" id="media-key-status"><div class="authorized none">No key</div></div>
+        </div>
+
+        <div class="media-block">
+          <div class="media-heading">Voice <small>Text to speech · free tier</small></div>
+          <textarea id="tts-text" rows="3" placeholder="Text to speak. Inline tags like [whispers] or [laughs] work too."></textarea>
+          <div class="media-grid">
+            <label>Voice<select id="tts-voice"></select></label>
+            <label>Model<select id="tts-model"></select></label>
+            <label class="wide">Style (optional)<input id="tts-style" type="text" placeholder="e.g. cheerful, calm narrator, excited sports commentator" /></label>
+          </div>
+          <div class="card-actions">
+            <button id="tts-btn" class="primary">Generate voice</button>
+          </div>
+          <div id="tts-result" class="media-result" hidden></div>
+        </div>
+
+        <div class="media-block">
+          <div class="media-heading">Video <small>With sound · paid, about $0.10 per second at 720p</small></div>
+          <textarea id="video-prompt" rows="3" placeholder="Describe the clip: subject, action, camera, style, sound."></textarea>
+          <div class="media-grid">
+            <label>Model<select id="video-model"></select></label>
+            <label>Aspect ratio<select id="video-aspect"></select></label>
+            <label>Resolution<select id="video-resolution"></select></label>
+          </div>
+          <p class="card-note">Veo was retired from the Gemini API on Oct 22, 2026; Gemini Omni is Google's API video model now. Veo itself is still in Flow and the Gemini app with your Ultra plan.</p>
+          <div class="card-actions">
+            <button id="video-btn" class="primary">Generate video</button>
+          </div>
+          <div id="video-result" class="media-result" hidden></div>
+        </div>
+      </section>
+
+      <section class="section-card">
+        <div class="card-title">
           <span>Usage Limits</span>
           <button id="refresh-usage-btn" class="icon-only" title="Refresh usage">
             <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">

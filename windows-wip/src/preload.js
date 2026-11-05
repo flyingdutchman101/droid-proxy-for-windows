@@ -22,6 +22,13 @@ contextBridge.exposeInMainWorld("droidProxy", {
   apiProviders: () => ipcRenderer.invoke("apikeys:list"),
   setApiKey: (entry) => ipcRenderer.invoke("apikeys:set", entry),
   clearApiKey: (provider) => ipcRenderer.invoke("apikeys:clear", provider),
+  mediaState: () => ipcRenderer.invoke("media:state"),
+  setMediaKey: (apiKey) => ipcRenderer.invoke("media:setKey", apiKey),
+  clearMediaKey: () => ipcRenderer.invoke("media:clearKey"),
+  speak: (options) => ipcRenderer.invoke("media:speak", options),
+  generateVideo: (options) => ipcRenderer.invoke("media:video", options),
+  openMediaFolder: () => ipcRenderer.invoke("media:openFolder"),
+  showMediaFile: (file) => ipcRenderer.invoke("media:showFile", file),
   onProxyState: (callback) => ipcRenderer.on("state:proxy", (_event, state) => callback(state)),
   onLogs: (callback) => ipcRenderer.on("state:logs", (_event, logs) => callback(logs)),
   onAccountsChanged: (callback) => ipcRenderer.on("state:accountsChanged", () => callback())
