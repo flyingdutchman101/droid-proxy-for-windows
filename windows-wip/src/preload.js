@@ -29,6 +29,11 @@ contextBridge.exposeInMainWorld("droidProxy", {
   generateVideo: (options) => ipcRenderer.invoke("media:video", options),
   openMediaFolder: () => ipcRenderer.invoke("media:openFolder"),
   showMediaFile: (file) => ipcRenderer.invoke("media:showFile", file),
+  openVeo: (options) => ipcRenderer.invoke("media:openVeo", options),
+  veoState: () => ipcRenderer.invoke("media:veoState"),
+  stopVeo: () => ipcRenderer.invoke("media:stopVeo"),
+  onMediaCollected: (callback) => ipcRenderer.on("media:collected", (_event, item) => callback(item)),
+  onVeoState: (callback) => ipcRenderer.on("media:veoState", (_event, state) => callback(state)),
   onProxyState: (callback) => ipcRenderer.on("state:proxy", (_event, state) => callback(state)),
   onLogs: (callback) => ipcRenderer.on("state:logs", (_event, logs) => callback(logs)),
   onAccountsChanged: (callback) => ipcRenderer.on("state:accountsChanged", () => callback())

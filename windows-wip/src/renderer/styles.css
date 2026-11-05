@@ -887,3 +887,39 @@ label {
 .media-result .file-link {
   justify-self: start;
 }
+
+.media-sub {
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--panel-border);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.media-subhead {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.media-subhead small {
+  margin-left: 6px;
+  color: var(--muted);
+  font-weight: 400;
+}
+
+.media-sub .card-actions {
+  flex-wrap: wrap;
+  align-items: center;
+  margin-top: 0;
+}
+
+.veo-status {
+  flex-basis: 100%;
+  text-align: right;
+  font-size: 12px;
+}
+
+.veo-status:empty {
+  display: none;
+}

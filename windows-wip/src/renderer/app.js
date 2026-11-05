@@ -608,6 +608,39 @@ document.querySelector("#video-btn").addEventListener("click", (event) => {
   });
 });
 
+// Veo 3.1 on the Ultra plan: open Flow / Gemini and collect downloads.
+function renderVeoState(state) {
+  const status = document.querySelector("#veo-status");
+  document.querySelector("#veo-stop-btn").hidden = !state.watching;
+  if (!state.watching) {
+    status.textContent = "";
+    return;
+  }
+  const until = new Date(state.until).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  status.textContent = `Watching Downloads until ${until}${state.collected ? ` · ${state.collected} collected` : ""}`;
+}
+
+async function openVeo(site) {
+  try {
+    const prompt = document.querySelector("#video-prompt").value;
+    renderVeoState(await api.openVeo({ site, prompt }));
+    showToast(prompt.trim() ? "Prompt copied. Paste it with Ctrl+V, then download the video when it is ready." : "Download the video when it is ready; it will show up here.");
+  } catch (error) {
+    showToast(cleanIpcError(error));
+  }
+}
+
+document.querySelector("#veo-flow-btn").addEventListener("click", () => openVeo("flow"));
+document.querySelector("#veo-gemini-btn").addEventListener("click", () => openVeo("gemini"));
+document.querySelector("#veo-stop-btn").addEventListener("click", async () => renderVeoState(await api.stopVeo()));
+api.onVeoState(renderVeoState);
+api.onMediaCollected((item) => {
+  showMediaResult("#veo-result", item, "video");
+  renderVeoState(item.state);
+  showToast(`Collected ${item.name}`);
+});
+api.veoState().then(renderVeoState).catch(() => {});
+
 async function boot() {
   setSettingsForm(await api.getSettings());
   renderProxyState(await api.proxyState());

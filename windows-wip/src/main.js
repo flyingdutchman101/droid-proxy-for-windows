@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, shell, Tray, Menu, safeStorage, screen, net } = require("electron");
+const { app, BrowserWindow, ipcMain, shell, Tray, Menu, safeStorage, screen, net, clipboard } = require("electron");
 const path = require("path");
 const fs = require("fs");
 const os = require("os");
@@ -1545,6 +1545,105 @@ ipcMain.handle("media:openFolder", () => {
   ensureDir(MEDIA_DIR);
   shell.openPath(MEDIA_DIR);
 });
+// Veo with the Google AI Ultra plan: Veo is only offered in Flow and the
+// Gemini app (no API for subscription credits), so the prompt is copied, the
+// site opens in the default browser where the user is already signed in, and
+// finished videos downloaded from there are collected into MEDIA_DIR.
+const VEO_SITES = {
+  flow: "https://labs.google/fx/tools/flow",
+  gemini: "https://gemini.google.com/app"
+};
+const VEO_WATCH_MS = 3 * 60 * 60 * 1000;
+const VEO_POLL_MS = 5000;
+let veoWatch = null;
+
+function sendToWindow(channel, payload) {
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(channel, payload);
+}
+
+function veoWatchState() {
+  return veoWatch ? { watching: true, until: veoWatch.until, collected: veoWatch.collected } : { watching: false, collected: 0 };
+}
+
+// New .mp4 files in Downloads are copied once their size has stopped changing
+// (browsers write to a temporary name first, but stay safe on slow disks).
+function pollVeoDownloads() {
+  const watch = veoWatch;
+  if (!watch) return;
+  if (Date.now() > watch.until) {
+    stopVeoWatch();
+    return;
+  }
+  let names = [];
+  try {
+    names = fs.readdirSync(watch.dir).filter((name) => /\.mp4$/i.test(name));
+  } catch (error) {
+    log(`Veo: cannot read Downloads (${error.message})`);
+    return;
+  }
+  for (const name of names) {
+    if (watch.done.has(name)) continue;
+    const source = path.join(watch.dir, name);
+    let stat;
+    try {
+      stat = fs.statSync(source);
+    } catch {
+      continue;
+    }
+    if (stat.mtimeMs < watch.since) {
+      watch.done.add(name);
+      continue;
+    }
+    if (watch.sizes.get(name) !== stat.size || stat.size === 0) {
+      watch.sizes.set(name, stat.size);
+      continue;
+    }
+    watch.done.add(name);
+    try {
+      ensureDir(MEDIA_DIR);
+      const stamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\..+/, "").replace("T", "-");
+      const target = path.join(MEDIA_DIR, `veo-${stamp}-${name.replace(/[^\w.-]+/g, "_")}`);
+      fs.copyFileSync(source, target);
+      watch.collected += 1;
+      log(`Veo: collected ${name} -> ${target}`);
+      sendToWindow("media:collected", { file: target, url: pathToFileURL(target).href, name, state: veoWatchState() });
+    } catch (error) {
+      log(`Veo: could not copy ${name} (${error.message})`);
+    }
+  }
+}
+
+function startVeoWatch() {
+  const now = Date.now();
+  if (veoWatch) {
+    veoWatch.until = now + VEO_WATCH_MS;
+  } else {
+    veoWatch = { dir: app.getPath("downloads"), since: now, until: now + VEO_WATCH_MS, done: new Set(), sizes: new Map(), collected: 0 };
+    veoWatch.timer = setInterval(pollVeoDownloads, VEO_POLL_MS);
+    log(`Veo: watching ${veoWatch.dir} for new videos`);
+  }
+  return veoWatchState();
+}
+
+function stopVeoWatch() {
+  if (!veoWatch) return veoWatchState();
+  clearInterval(veoWatch.timer);
+  log(`Veo: stopped watching Downloads (${veoWatch.collected} collected)`);
+  veoWatch = null;
+  const state = veoWatchState();
+  sendToWindow("media:veoState", state);
+  return state;
+}
+
+ipcMain.handle("media:openVeo", (_event, { site = "flow", prompt = "" } = {}) => {
+  const url = VEO_SITES[site] || VEO_SITES.flow;
+  if (String(prompt).trim()) clipboard.writeText(String(prompt).trim());
+  shell.openExternal(url);
+  return startVeoWatch();
+});
+ipcMain.handle("media:veoState", () => veoWatchState());
+ipcMain.handle("media:stopVeo", () => stopVeoWatch());
+
 ipcMain.handle("media:showFile", (_event, file) => {
   const resolved = path.resolve(String(file || ""));
   if (path.dirname(resolved) === MEDIA_DIR && fs.existsSync(resolved)) shell.showItemInFolder(resolved);

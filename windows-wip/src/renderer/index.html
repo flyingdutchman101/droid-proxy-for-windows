@@ -92,7 +92,7 @@
             </svg>
           </button>
         </div>
-        <p class="card-note">Google's speech and video models through the Gemini API. They are not part of the Google AI Ultra sign-in, so they need an API key from Google AI Studio (aistudio.google.com/apikey). Speech has a free tier; video is paid only. Files are saved to Documents\VeryCuteDroidProxy.</p>
+        <p class="card-note">Speech and Gemini Omni video use the Gemini API, which the Google AI Ultra plan does not cover, so they need an API key from Google AI Studio (aistudio.google.com/apikey); speech has a free tier. Veo 3.1 runs on your Ultra plan with no key. Files are saved to Documents\VeryCuteDroidProxy.</p>
         <div class="provider api" id="media-key-row">
           <div class="provider-head">
             <img class="provider-logo" src="icons/gemini.png" alt="" />
@@ -121,18 +121,33 @@
         </div>
 
         <div class="media-block">
-          <div class="media-heading">Video <small>With sound · paid, about $0.10 per second at 720p</small></div>
+          <div class="media-heading">Video <small>With sound</small></div>
           <textarea id="video-prompt" rows="3" placeholder="Describe the clip: subject, action, camera, style, sound."></textarea>
-          <div class="media-grid">
-            <label>Model<select id="video-model"></select></label>
-            <label>Aspect ratio<select id="video-aspect"></select></label>
-            <label>Resolution<select id="video-resolution"></select></label>
+
+          <div class="media-sub">
+            <div class="media-subhead">Veo 3.1 <small>Your Google AI Ultra plan · no key</small></div>
+            <p class="card-note">Veo has no API for plan credits, so it runs in Flow or the Gemini app in your browser, where you are already signed in. The button copies your prompt (paste it with Ctrl+V), opens the site, and for the next 3 hours copies every new .mp4 you download into the output folder and shows it here. On Ultra, an 8-second clip costs about 5 credits on Veo 3.1 Lite, 10 on Fast, 100 on Quality; pick the model in Flow.</p>
+            <div class="card-actions">
+              <span id="veo-status" class="veo-status muted"></span>
+              <button id="veo-stop-btn" class="small" hidden>Stop watching</button>
+              <button id="veo-gemini-btn">Open Gemini app</button>
+              <button id="veo-flow-btn" class="primary">Copy prompt &amp; open Flow</button>
+            </div>
+            <div id="veo-result" class="media-result" hidden></div>
           </div>
-          <p class="card-note">Veo was retired from the Gemini API on Oct 22, 2026; Gemini Omni is Google's API video model now. Veo itself is still in Flow and the Gemini app with your Ultra plan.</p>
-          <div class="card-actions">
-            <button id="video-btn" class="primary">Generate video</button>
+
+          <div class="media-sub">
+            <div class="media-subhead">Gemini Omni 1.1 Flash <small>API key · paid, about $0.10 per second at 720p</small></div>
+            <div class="media-grid">
+              <label>Model<select id="video-model"></select></label>
+              <label>Aspect ratio<select id="video-aspect"></select></label>
+              <label>Resolution<select id="video-resolution"></select></label>
+            </div>
+            <div class="card-actions">
+              <button id="video-btn" class="primary">Generate video</button>
+            </div>
+            <div id="video-result" class="media-result" hidden></div>
           </div>
-          <div id="video-result" class="media-result" hidden></div>
         </div>
       </section>
 
