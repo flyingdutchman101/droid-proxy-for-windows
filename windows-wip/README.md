@@ -71,7 +71,7 @@ npm run icon   # re-render resources/icon.png and icon.ico from resources/icon.s
 
 ## Updating the backend
 
-`resources/bin/cli-proxy-api.exe` is the official CLIProxyAPI Windows amd64 build (currently 8.0.51). To update it, download `CLIProxyAPI_<version>_windows_amd64.zip` from the [CLIProxyAPI releases](https://github.com/router-for-me/CLIProxyAPI/releases), verify it against that release's `checksums.txt`, and replace the exe.
+`resources/bin/cli-proxy-api.exe` is the official CLIProxyAPI Windows amd64 build (currently 8.0.60). To update it, download `CLIProxyAPI_<version>_windows_amd64.zip` from the [CLIProxyAPI releases](https://github.com/router-for-me/CLIProxyAPI/releases), verify it against that release's `checksums.txt`, and replace the exe.
 
 ## Credits
 

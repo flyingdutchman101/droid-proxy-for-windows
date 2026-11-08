@@ -67,7 +67,23 @@ function writeJSON(file, value) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const temp = `${file}.${process.pid}.${crypto.randomBytes(4).toString('hex')}.tmp`;
   fs.writeFileSync(temp, JSON.stringify(value, null, 2));
-  fs.renameSync(temp, file);
+  // Windows refuses the rename while another hook process or a scanner has the
+  // target open (EPERM/EBUSY); retry briefly, then fall back to a direct write.
+  for (let attempt = 0; attempt < 6; attempt += 1) {
+    try {
+      fs.renameSync(temp, file);
+      return;
+    } catch (error) {
+      if (!['EPERM', 'EBUSY', 'EACCES'].includes(error.code)) throw error;
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25 * (attempt + 1));
+    }
+  }
+  fs.writeFileSync(file, JSON.stringify(value, null, 2));
+  try {
+    fs.rmSync(temp, { force: true });
+  } catch {
+    // leftover temp files are harmless
+  }
 }
 
 function loadConfig(p) {
