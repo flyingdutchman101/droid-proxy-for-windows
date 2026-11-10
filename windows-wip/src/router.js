@@ -59,17 +59,17 @@ const DEFAULT_ROLE_MODELS = {
   legal: {
     orchestrator: role("gemini-4-argon-high", "claude-opus-5-5", "ag-c55o-high"),
     worker: role("gemini-3.8-flash-high", "claude-haiku-5-5", "ag-c55s-high"),
-    validator: role("claude-fable-5-1", "claude-opus-5-5", "gemini-4-argon-high")
+    validator: role("claude-fable-5-2", "claude-opus-5-5", "gemini-4-argon-high")
   },
   business: {
     orchestrator: role("claude-opus-5-5", "gemini-4-argon-high", "gpt-6-astra"),
     worker: role("gemini-3.8-flash-high", "gpt-6.1-terra", "claude-haiku-5-5"),
-    validator: role("claude-fable-5-1", "ag-c55o-high", "gemini-4-argon-high")
+    validator: role("claude-fable-5-2", "ag-c55o-high", "gemini-4-argon-high")
   },
   writing: {
     orchestrator: role("gemini-4-argon-high", "claude-opus-5-5", "ag-c55o-high"),
     worker: role("gemini-3.8-flash-high", "claude-sonnet-5-5", "claude-haiku-5-5"),
-    validator: role("claude-opus-5-5", "ag-c55o-high", "claude-fable-5-1")
+    validator: role("claude-opus-5-5", "ag-c55o-high", "claude-fable-5-2")
   },
   research: {
     orchestrator: role("gpt-6-astra", "claude-opus-5-5", "gemini-4-argon-high"),
@@ -77,7 +77,7 @@ const DEFAULT_ROLE_MODELS = {
     validator: role("claude-opus-5-5", "gemini-4-argon-high", "ag-c55o-high")
   },
   math: {
-    orchestrator: role("gemini-4-argon-high", "claude-fable-5-1", "gpt-6-astra"),
+    orchestrator: role("gemini-4-argon-high", "claude-fable-5-2", "gpt-6-astra"),
     worker: role("claude-sonnet-5-5", "gpt-6.1-sol", "ag-c55s-high"),
     validator: role("gpt-6.1-sol", "gpt-6-astra", "claude-opus-5-5")
   },
@@ -89,7 +89,8 @@ const DEFAULT_ROLE_MODELS = {
 };
 
 const DEFAULT_CHAINS = {
-  "claude-fable-5-1": ["ag-c55o-high", "gpt-6.1-sol", "gemini-4-argon-high"],
+  "claude-fable-5-2": ["ag-c55o-high", "claude-opus-5-5", "gpt-6.1-sol", "gemini-4-argon-high"],
+  "claude-fable-5-1": ["claude-fable-5-2", "ag-c55o-high", "gpt-6.1-sol", "gemini-4-argon-high"],
   "claude-opus-5-5": ["ag-c55o-high", "gpt-6.1-sol", "gemini-4-argon-high"],
   "claude-sonnet-5-5": ["ag-c55s-high", "gpt-6.1-sol", "gemini-4-argon-high"],
   "claude-haiku-5-5": ["gemini-3.8-flash-high", "gpt-6-luna"],
@@ -100,6 +101,7 @@ const DEFAULT_CHAINS = {
   "gpt-6.1-terra": ["gpt-6.1-sol", "claude-sonnet-5-5", "gemini-4-argon-high"],
   "gpt-6-luna": ["claude-haiku-5-5", "gemini-3.8-flash-high"],
   "gemini-4-argon-high": ["claude-opus-5-5", "gpt-6.1-sol"],
+  "gemini-4-carbon-high": ["gemini-4-argon-high", "claude-opus-5-5", "gpt-6.1-sol"],
   "gemini-3.8-flash-high": ["claude-haiku-5-5", "gpt-6-luna"],
   "kimi-k3": ["claude-sonnet-5-5", "gpt-6.1-sol"],
   "kimi-k2.6": ["claude-sonnet-5-5", "gpt-6.1-sol"]
@@ -116,11 +118,11 @@ const DEFAULT_OVERFLOW_THRESHOLD = 35;
 const DEFAULT_OVERFLOW_MODELS = ["qwen/qwen3.8-max", "qwen/glm-5.3", "deepseek/deepseek-v4-pro"];
 const DEFAULT_MISSION_OVERFLOW_MODELS = ["deepseek/deepseek-v4-pro"];
 
-// Premium pick: Fable 5.1 leads LegalBench (88.5%) and EMB financial
-// modelling (76.7%) and is #2 on Arena Math, but costs 2.5x Opus on the same
-// Claude quota. So normal Auto sessions in those categories use it only while
-// Claude has plenty of quota left.
-const DEFAULT_PREMIUM = { enabled: true, model: "claude-fable-5-1", threshold: 60, categories: ["legal", "business", "math"] };
+// Premium pick: Fable 5.2 (Nov 2026). Fable 5.1 led LegalBench (88.5%) and EMB
+// financial modelling (76.7%) and was #2 on Arena Math; 5.2 improves on it.
+// Fable still costs well over Opus on the same Claude quota, so normal Auto
+// sessions in those categories use it only while Claude has plenty left.
+const DEFAULT_PREMIUM = { enabled: true, model: "claude-fable-5-2", threshold: 60, categories: ["legal", "business", "math"] };
 
 // Categories where some model families are too weak to use even as a backup.
 // GPT 6 models score 58-69% on the Vals Legal Index (Argon 77%, GLM-5.3 75%,
@@ -128,7 +130,7 @@ const DEFAULT_PREMIUM = { enabled: true, model: "claude-fable-5-1", threshold: 6
 // before Fable so equal Claude quota picks the cheaper model; Fable is chosen
 // through the premium rule or as a backup.
 const CATEGORY_POOLS = {
-  legal: ["gemini-4-argon-high", "ag-c55o-high", "claude-opus-5-5", "claude-fable-5-1"]
+  legal: ["gemini-4-argon-high", "ag-c55o-high", "claude-opus-5-5", "claude-fable-5-2"]
 };
 const CATEGORY_EXCLUDES = {
   legal: ["gpt-"]
@@ -147,8 +149,10 @@ const STRONGER = {
   "gpt-6.1-terra": "gpt-6-astra",
   "claude-haiku-5-5": "claude-sonnet-5-5",
   "claude-sonnet-5-5": "claude-opus-5-5",
-  "claude-opus-5-5": { model: "claude-fable-5-1", except: ["coding"] },
+  "claude-opus-5-5": { model: "claude-fable-5-2", except: ["coding"] },
   "gemini-3.8-flash-high": "gemini-4-argon-high",
+  "gemini-4-argon-high": "gemini-4-carbon-high",
+  "claude-fable-5-1": "claude-fable-5-2",
   "ag-c55s-high": "ag-c55o-high"
 };
 const DEFAULT_PACE = { enabled: true, surplus: 15, effortBoost: true };

@@ -45,6 +45,10 @@ const CONFIG_PATH = path.join(AUTH_DIR, "droidproxy-windows-config.yaml");
 const LOG_PATH = path.join(AUTH_DIR, "droidproxy-windows.log");
 const FACTORY_SETTINGS_PATH = path.join(os.homedir(), ".factory", "settings.json");
 
+// Saved routing choices that still name an older model version move to the
+// newer one once; picking the old model again afterwards sticks.
+const MODEL_MIGRATIONS = [{ id: "fable-5-2", from: "claude-fable-5-1", to: "claude-fable-5-2" }];
+
 const DEFAULT_SETTINGS = {
   host: "127.0.0.1",
   port: 8317,
@@ -138,6 +142,7 @@ const FACTORY_MODELS = [
     supportedReasoningEfforts: ALL_EFFORTS,
     defaultReasoningEffort: "medium"
   },
+  claudeModel("claude-fable-5-2", "DroidProxy: Fable 5.2"),
   claudeModel("claude-fable-5-1", "DroidProxy: Fable 5.1"),
   claudeModel("claude-opus-5-5", "DroidProxy: Opus 5.5"),
   claudeModel("claude-sonnet-5-5", "DroidProxy: Sonnet 5.5"),
@@ -145,6 +150,9 @@ const FACTORY_MODELS = [
   geminiModel("gemini-3.8-flash-high", "DroidProxy: Gemini 3.8 Flash (High)"),
   // Antigravity only serves this to paid (non-trial) Google AI Pro/Ultra accounts.
   geminiModel("gemini-4-argon-high", "DroidProxy: Gemini 4 Argon (High)"),
+  // Google's frontier coding / long-horizon model (Oct 2026); served on
+  // Google AI Ultra through Antigravity.
+  geminiModel("gemini-4-carbon-high", "DroidProxy: Gemini 4 Carbon (High)", ["high"], { maxContextLimit: 1048576 }),
   // Claude served by the Google AI Pro/Ultra subscription instead of a Claude one.
   // The ag- aliases are rewritten to Antigravity's IDs in proxy.js, as on macOS.
   geminiModel("ag-c55o-high", "DroidProxy: Claude Opus 5.5 (High) via Google", ["high"], { maxOutputTokens: 128000, maxContextLimit: 1000000 }),
@@ -166,12 +174,14 @@ const BASE_MODEL_IDS = {
   "gpt-6.1-sol": "gpt-6.1-sol",
   "gpt-6.1-terra": "gpt-6.1-sol",
   "gpt-6-luna": "gpt-6-luna",
+  "claude-fable-5-2": "claude-fable-5.1",
   "claude-fable-5-1": "claude-fable-5.1",
   "claude-opus-5-5": "claude-opus-5-5",
   "claude-sonnet-5-5": "claude-sonnet-5-5",
   "claude-haiku-5-5": "claude-haiku-5-5",
   "gemini-3.8-flash-high": "gemini-3.8-flash",
   "gemini-4-argon-high": "gemini-3.8-flash",
+  "gemini-4-carbon-high": "gemini-3.8-flash",
   "ag-c55o-high": "claude-opus-5-5",
   "ag-c55s-high": "claude-sonnet-5-5",
   "kimi-k3": "kimi-k3",
@@ -264,10 +274,35 @@ function ensureDir(dir) {
   fs.mkdirSync(dir, { recursive: true });
 }
 
+function migrateSettings(saved) {
+  const done = new Set(Array.isArray(saved.migrations) ? saved.migrations : []);
+  for (const { id, from, to } of MODEL_MIGRATIONS) {
+    if (done.has(id)) continue;
+    const swap = (value) => (value === from ? to : value);
+    if (saved.premium?.model) saved.premium.model = swap(saved.premium.model);
+    for (const category of Object.keys(saved.categoryModels || {})) saved.categoryModels[category] = swap(saved.categoryModels[category]);
+    for (const roles of Object.values(saved.roleModels || {})) {
+      for (const cell of Object.values(roles || {})) {
+        for (const slot of ["model", "backup", "backup2"]) if (cell && cell[slot]) cell[slot] = swap(cell[slot]);
+      }
+    }
+    for (const key of ["overflowModels", "missionOverflowModels", "classifierModels"]) {
+      if (Array.isArray(saved[key])) saved[key] = saved[key].map(swap);
+    }
+    if (saved.fallbackChains) {
+      for (const [model, chain] of Object.entries(saved.fallbackChains)) saved.fallbackChains[model] = Array.isArray(chain) ? chain.map(swap) : chain;
+      if (saved.fallbackChains[from] && !saved.fallbackChains[to]) saved.fallbackChains[to] = DEFAULT_CHAINS[to] || saved.fallbackChains[from];
+    }
+    done.add(id);
+  }
+  saved.migrations = [...done];
+  return saved;
+}
+
 function loadSettings() {
   try {
     const raw = fs.readFileSync(SETTINGS_PATH, "utf8");
-    return sanitizeSettings({ ...DEFAULT_SETTINGS, ...JSON.parse(raw) });
+    return sanitizeSettings({ ...DEFAULT_SETTINGS, ...migrateSettings(JSON.parse(raw)) });
   } catch {
     return sanitizeSettings({ ...DEFAULT_SETTINGS });
   }
@@ -303,6 +338,7 @@ function sanitizeSettings(value) {
     maxOutputTokens: Number.isInteger(maxOutputTokens) && maxOutputTokens >= 1024 ? maxOutputTokens : DEFAULT_SETTINGS.maxOutputTokens,
     enableThinking: Boolean(value.enableThinking),
     reasoningEffort,
+    migrations: Array.isArray(value.migrations) ? value.migrations.filter((item) => typeof item === "string") : MODEL_MIGRATIONS.map((item) => item.id),
     autoEnabled: value.autoEnabled !== false,
     categoryModels: Object.fromEntries(Object.keys(CATEGORIES).map((category) => {
       const chosen = value.categoryModels?.[category];
