@@ -28,6 +28,8 @@ contextBridge.exposeInMainWorld("droidProxy", {
   uninstallManager: () => ipcRenderer.invoke("manager:uninstall"),
   runRetrospective: () => ipcRenderer.invoke("manager:retro"),
   openManagerFolder: () => ipcRenderer.invoke("manager:openFolder"),
+  dshState: () => ipcRenderer.invoke("dsh:state"),
+  applyDsh: () => ipcRenderer.invoke("dsh:apply"),
   mediaState: () => ipcRenderer.invoke("media:state"),
   setMediaKey: (apiKey) => ipcRenderer.invoke("media:setKey", apiKey),
   clearMediaKey: () => ipcRenderer.invoke("media:clearKey"),

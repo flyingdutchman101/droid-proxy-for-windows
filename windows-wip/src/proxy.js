@@ -204,7 +204,17 @@ function createFrontProxy({ targetHost, targetPort, log, router = null, usageTra
     res.end(JSON.stringify({ error: { message: `DroidProxy could not reach cli-proxy-api: ${error.message}` } }));
   };
 
+  const seenClients = new Set();
+  const noteClient = (headers) => {
+    const agent = String(headers["user-agent"] || "unknown").split(/[\s/]/)[0].slice(0, 40);
+    if (seenClients.has(agent) || seenClients.size > 50) return;
+    seenClients.add(agent);
+    const names = Object.keys(headers).filter((name) => !/authorization|api-key|cookie|token|secret/i.test(name)).sort();
+    log(`Client seen: ${agent} · headers: ${names.join(", ")}`);
+  };
+
   return http.createServer((req, res) => {
+    noteClient(req.headers);
     const chunks = [];
     req.on("data", (chunk) => chunks.push(chunk));
     req.on("end", async () => {

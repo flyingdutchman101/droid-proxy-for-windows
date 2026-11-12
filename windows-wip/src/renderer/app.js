@@ -435,6 +435,29 @@ document.querySelector("#apply-factory-btn").addEventListener("click", async () 
   }
 });
 
+function renderDshStatus(state) {
+  const badge = document.querySelector("#dsh-status");
+  if (!state.installed) {
+    badge.textContent = "Not installed";
+    badge.classList.remove("applied");
+    document.querySelector("#apply-dsh-btn").disabled = true;
+    return;
+  }
+  const legacy = state.profiles.some((item) => item.legacy);
+  badge.textContent = state.applied ? "Applied" : legacy ? "Old setup (bypasses routing)" : "Not applied";
+  badge.classList.toggle("applied", state.applied);
+}
+
+document.querySelector("#apply-dsh-btn").addEventListener("click", async () => {
+  try {
+    renderDshStatus(await api.applyDsh());
+    showToast("DeepSeek Harness models updated. Restart DeepSeek Harness to load them.");
+  } catch (error) {
+    showToast(cleanIpcError(error));
+  }
+});
+api.dshState().then(renderDshStatus).catch(() => {});
+
 document.querySelector("#clear-log-btn").addEventListener("click", () => {
   elements.logs.textContent = "";
 });

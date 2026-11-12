@@ -30,6 +30,7 @@ const { API_PROVIDERS, apiModelId, providerRegion, providerModels, regionForKey,
 const { createUsageTracker } = require("./usage");
 const { pathToFileURL } = require("url");
 const { createManager } = require("./manager/manager");
+const dsh = require("./dsh");
 const { createMedia, TTS_MODELS, VIDEO_MODELS, VOICES, ASPECT_RATIOS, RESOLUTIONS } = require("./media");
 
 const APP_NAME = "VeryCuteDroidProxy";
@@ -1629,6 +1630,15 @@ ipcMain.handle("manager:retro", async () => {
 ipcMain.handle("manager:openFolder", () => {
   ensureDir(getManager().folder);
   shell.openPath(getManager().folder);
+});
+
+// DeepSeek Harness: same model list as Factory, written as dsh provider routes.
+const frontOrigin = () => `http://${settings.host}:${settings.port}`;
+ipcMain.handle("dsh:state", () => dsh.state(frontOrigin()));
+ipcMain.handle("dsh:apply", () => {
+  const results = dsh.apply(factoryModels(), frontOrigin());
+  log(`DeepSeek Harness: ${results.map((item) => `${item.profile} ${item.changed ? `updated (${item.models} models)` : "already current"}`).join(", ")}`);
+  return dsh.state(frontOrigin());
 });
 
 ipcMain.handle("media:state", () => mediaState());
