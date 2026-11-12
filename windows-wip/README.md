@@ -5,7 +5,7 @@ Electron-based Windows app that runs the bundled [CLIProxyAPI](https://github.co
 ## Features
 
 - One-click OAuth login for Codex, Claude, Gemini (via Google Antigravity), and Kimi Code. Each connected account is listed under its provider as **Authorized**.
-- API keys for DeepSeek, Qwen Cloud, Kimi API (Moonshot), GLM (Z.ai), MiniMax, Mistral (EU endpoint available), and OpenRouter. Keys are encrypted with Windows DPAPI; their models get a provider prefix (for example `deepseek/deepseek-v4-pro`). Configured providers are listed first and the rest are folded away. China-hosted endpoints process your code in China.
+- API keys for DeepSeek, Qwen Cloud, Kimi API (Moonshot), GLM (Z.ai), MiniMax, Mistral (EU endpoint available), and OpenRouter. Keys are encrypted with the app's DPAPI-protected key; a key that cannot be stored durably is refused with an error instead of being saved unreadable. Their models get a provider prefix (for example `deepseek/deepseek-v4-pro`). If a saved key ever becomes unreadable, the provider is flagged in the app and its models stay in Factory and DeepSeek Harness until you enter the key again or remove the provider. Configured providers are listed first and the rest are folded away. China-hosted endpoints process your code in China.
   - Qwen Cloud **Token Plan** keys (`sk-sp-`) are detected and sent to `token-plan.maas.qwencloudapi.com`, which also serves GLM-5.3 and DeepSeek V4 Pro. Pay-as-you-go keys use the region endpoints. Qwen Cloud's Token Plan terms restrict it to interactive tool use and forbid automation or batch use, so keep it out of unattended Missions.
 - **Auto routing:** pick **DroidProxy: Auto** in Factory. A fast model (Haiku 5.5, then Gemini 3.8 Flash, then GPT 6 Luna) classifies the first message of each session as coding, legal, business, writing, research, math, or quick, and the session stays on the model chosen for that category. Defaults come from independent leaderboards (Vals AI, Arena) and are editable in the app.
 - **Balanced routing** (on by default): each Auto session picks, within its pool (the task type's model plus its backups, or a role's Model / Backup / Backup 2), the model whose plan is furthest **ahead of its weekly pace**: % left in the weekly/monthly window minus % of that window's time left. A plan with 36% left and 2 hours to reset (+35) goes before one with 87% left and 5 days to go (+16), so quota that would reset unused is spent first and plans running behind are saved. A plan whose 5-hour window is nearly empty is skipped. Quotas are read every 10 minutes. Sessions are re-checked on the next user message every 15 minutes, sessions that started as "quick" are re-classified once real work arrives, and a session that hits a limit stays on the backup that served it. When every plan in the pool is below the overflow threshold (default 35% left) and none is ahead of pace, the session goes to pay-per-token overflow models: Qwen3.8 Max, GLM-5.3 and DeepSeek V4 Pro for normal sessions, DeepSeek V4 Pro only for Missions (Qwen's Token Plan terms forbid automation).
@@ -30,6 +30,7 @@ Electron-based Windows app that runs the bundled [CLIProxyAPI](https://github.co
   - Claude Opus 5.5 (High) and Sonnet 5.5 (High) via Google, billed to Google AI Pro/Ultra
   - Kimi K3, Kimi K2.6 (Kimi Code)
   - Models for every API-key provider you configure
+- Applies the same models to DeepSeek Harness (`~/.dsh/profiles/*/cordis.patch.yml`, backup written first). Every model is declared with `input: [text, image]` so image attachments are accepted. A later Apply rewrites each model's id, name, sizes and reasoning levels and keeps `input` and any other field you added to the model in DeepSeek Harness.
 - Starts the proxy automatically when the app opens.
 - Closing the window hides it to the system tray and keeps the proxy running. Use the tray icon to reopen the window or **Quit**. Launching the exe again reopens the running instance instead of starting a second one.
 - Logs are also written to `%USERPROFILE%\.cli-proxy-api\droidproxy-windows.log`.
@@ -66,6 +67,7 @@ Credentials are stored by CLIProxyAPI in `%USERPROFILE%\.cli-proxy-api`.
 npm install
 npm start
 npm run check
+npm test       # sync and key-storage tests (node --test)
 npm run icon   # re-render resources/icon.png and icon.ico from resources/icon.svg
 ```
 

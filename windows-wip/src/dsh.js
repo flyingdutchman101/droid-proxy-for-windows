@@ -22,7 +22,12 @@ const ROUTES = {
   "droidproxy-openai": { api: "openai-responses", suffix: "/v1", label: "VeryCuteDroidProxy · GPT" },
   "droidproxy-compat": { api: "openai-completions", suffix: "/v1", label: "VeryCuteDroidProxy · Gemini, Kimi & API keys" }
 };
-const MARKER = " VeryCuteDroidProxy: written by the app (Apply to DeepSeek Harness). Edit models in DroidProxy, not here.";
+const MARKER = " VeryCuteDroidProxy: written by the app (Apply to DeepSeek Harness). A sync rewrites each model's id, name, sizes and reasoning levels; `input` and any other field you add to a model is kept.";
+// dsh refuses an attachment before sending unless the model declares it.
+// `text` and `image` are the only modalities dsh accepts.
+const DEFAULT_INPUT = ["text", "image"];
+// Fields a sync owns. Anything else on a model entry belongs to the user.
+const MANAGED_FIELDS = new Set(["id", "name", "contextWindow", "maxTokens", "reasoningEfforts"]);
 // Auto can land on GPT (272k context), so dsh compacts Auto sessions early.
 const AUTO_CONTEXT = 272000;
 const DEFAULT_CONTEXT = { claude: 1000000, gemini: 900000, other: 1000000 };
@@ -45,24 +50,42 @@ function contextFor(model) {
   return DEFAULT_CONTEXT.other;
 }
 
-function modelEntry(model) {
+const declaredInput = (entry) => (Array.isArray(entry?.input) && entry.input.length ? entry.input : null);
+
+// `existing` is the model's entry already in the profile, if any: its `input`
+// wins (dsh is where the user corrects what an endpoint really accepts) and
+// its unmanaged fields are carried over.
+function modelEntry(model, existing) {
   const efforts = Array.isArray(model.supportedReasoningEfforts) ? model.supportedReasoningEfforts : [];
   const entry = {
     id: model.model,
     name: String(model.displayName || model.model).replace(/^DroidProxy:\s*/, ""),
+    input: declaredInput(existing) || (model.noImageSupport ? ["text"] : [...DEFAULT_INPUT]),
     contextWindow: contextFor(model),
     maxTokens: model.maxOutputTokens || 64000
   };
   entry.reasoningEfforts = efforts.length ? Object.fromEntries(efforts.map((level) => [level, level])) : false;
+  for (const [key, value] of Object.entries(existing || {})) {
+    if (!MANAGED_FIELDS.has(key) && key !== "input") entry[key] = value;
+  }
   return entry;
 }
 
 // `models` are Factory model entries (factoryModels()); `origin` is the
-// DroidProxy front proxy, e.g. http://127.0.0.1:8317.
-function buildProviders(models, origin, keyRef = DEFAULT_KEY_REF) {
+// DroidProxy front proxy, e.g. http://127.0.0.1:8317. `previous` holds each
+// route's current model entries. Models of the providers in `keepModelPrefixes`
+// ("deepseek" keeps "deepseek/...") stay even when `models` no longer lists
+// them: their saved API key is unreadable right now, which is not a removal.
+function buildProviders(models, origin, keyRef = DEFAULT_KEY_REF, previous = {}, keepModelPrefixes = []) {
   const providers = {};
   for (const [key, route] of Object.entries(ROUTES)) {
-    const list = models.filter((model) => routeFor(model) === key).map(modelEntry);
+    const before = new Map((previous[key] || []).filter((entry) => typeof entry?.id === "string").map((entry) => [entry.id, entry]));
+    const list = models.filter((model) => routeFor(model) === key).map((model) => modelEntry(model, before.get(model.model)));
+    const listed = new Set(list.map((entry) => entry.id));
+    for (const [id, entry] of before) {
+      if (listed.has(id) || !keepModelPrefixes.some((prefix) => id.startsWith(`${prefix}/`))) continue;
+      list.push({ ...entry, input: declaredInput(entry) || [...DEFAULT_INPUT] });
+    }
     if (!list.length) continue;
     providers[key] = { displayName: route.label, apiKeyEnv: keyRef, api: route.api, baseURL: `${origin}${route.suffix}`, models: list };
   }
@@ -121,8 +144,9 @@ function ensureCredentialRef(keyRef, home = dshHome()) {
 }
 
 // Rewrites only DroidProxy's routes inside the pi-ai entry; every other patch
-// entry, provider and comment in the file is kept.
-function applyToProfile(profile, models, origin, home = dshHome()) {
+// entry, provider and comment in the file is kept. `options.keepModelPrefixes`
+// is described at buildProviders.
+function applyToProfile(profile, models, origin, home = dshHome(), options = {}) {
   const file = patchFile(profile, home);
   const existing = fs.existsSync(file) ? fs.readFileSync(file, "utf8") : "";
   const doc = existing.trim() ? YAML.parseDocument(existing) : new YAML.Document([]);
@@ -145,22 +169,38 @@ function applyToProfile(profile, models, origin, home = dshHome()) {
   const keyRef = (YAML.isMap(legacy) && legacy.get("apiKeyEnv")) || (YAML.isMap(providersNode.get("droidproxy-claude", true)) && providersNode.getIn(["droidproxy-claude", "apiKeyEnv"])) || DEFAULT_KEY_REF;
   // The old single route pointed at the raw backend port; replace it.
   if (YAML.isMap(legacy) && /127\.0\.0\.1|localhost/.test(String(legacy.get("baseURL") || ""))) providersNode.delete(LEGACY_PROVIDER);
-  for (const key of Object.keys(ROUTES)) providersNode.delete(key);
-  const providers = buildProviders(models, origin, keyRef);
-  for (const [key, value] of Object.entries(providers)) providersNode.set(key, doc.createNode(value));
+  const previous = {};
+  for (const key of Object.keys(ROUTES)) {
+    const list = providersNode.getIn([key, "models"], true);
+    previous[key] = YAML.isSeq(list) ? list.toJSON() : [];
+    providersNode.delete(key);
+  }
+  const providers = buildProviders(models, origin, keyRef, previous, options.keepModelPrefixes || []);
+  for (const [key, value] of Object.entries(providers)) {
+    const node = doc.createNode(value);
+    // One line per model instead of a list entry per modality.
+    for (const item of node.get("models", true).items) {
+      const input = item.get("input", true);
+      if (YAML.isSeq(input)) input.flow = true;
+    }
+    providersNode.set(key, node);
+  }
   entry.commentBefore = MARKER;
+  const written = Object.values(providers).flatMap((provider) => provider.models.map((model) => model.id));
+  const requested = new Set(models.map((model) => model.model));
+  const result = { profile, models: written.length, kept: written.filter((id) => !requested.has(id)) };
   const text = doc.toString({ lineWidth: 0 });
-  if (text === existing) return { profile, changed: false, models: models.length, credential: ensureCredentialRef(keyRef, home) };
+  if (text === existing) return { ...result, changed: false, credential: ensureCredentialRef(keyRef, home) };
   fs.mkdirSync(path.dirname(file), { recursive: true });
   if (existing) fs.copyFileSync(file, `${file}.droidproxy-${stamp()}.bak`);
   fs.writeFileSync(file, text);
-  return { profile, changed: true, models: Object.values(providers).reduce((sum, provider) => sum + provider.models.length, 0), credential: ensureCredentialRef(keyRef, home) };
+  return { ...result, changed: true, credential: ensureCredentialRef(keyRef, home) };
 }
 
-function apply(models, origin, home = dshHome()) {
+function apply(models, origin, home = dshHome(), options = {}) {
   const names = profiles(home);
   if (!names.length) throw new Error("DeepSeek Harness profiles were not found. Open DeepSeek Harness once, then try again.");
-  return names.map((profile) => applyToProfile(profile, models, origin, home));
+  return names.map((profile) => applyToProfile(profile, models, origin, home, options));
 }
 
 function state(origin, home = dshHome()) {

@@ -31,6 +31,8 @@ const { createUsageTracker } = require("./usage");
 const { pathToFileURL } = require("url");
 const { createManager } = require("./manager/manager");
 const dsh = require("./dsh");
+const secrets = require("./secrets");
+const { mergeCustomModels, isInstalled } = require("./factory-sync");
 const { createMedia, TTS_MODELS, VIDEO_MODELS, VOICES, ASPECT_RATIOS, RESOLUTIONS } = require("./media");
 
 const APP_NAME = "VeryCuteDroidProxy";
@@ -394,29 +396,73 @@ function providerRegionKey(providerKey, regionKey) {
   return regions[regionKey] ? regionKey : Object.keys(regions)[0];
 }
 
-function encryptSecret(secret) {
-  if (!safeStorage.isEncryptionAvailable()) throw new Error("Windows encryption is not available, so the key cannot be stored safely.");
-  return safeStorage.encryptString(secret).toString("base64");
+// Saved keys are encrypted with the key Chromium stores (DPAPI-wrapped) in
+// Local State, read directly. safeStorage alone is not trusted to encrypt: see
+// secrets.js.
+let storedKey = null;
+let storedKeyLoad = null;
+function loadStoredKey() {
+  if (storedKey) return Promise.resolve(storedKey);
+  if (!storedKeyLoad) {
+    storedKeyLoad = secrets.loadDiskKey(path.join(app.getPath("userData"), "Local State")).then((key) => {
+      storedKey = key;
+      storedKeyLoad = null;
+      return key;
+    });
+  }
+  return storedKeyLoad;
+}
+
+// Local State can be locked for a moment after launch, and on a first-ever run
+// Chromium writes it a few seconds after startup.
+async function requireStoredKey() {
+  for (let attempt = 0; attempt < 15; attempt += 1) {
+    if (await loadStoredKey()) return storedKey;
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+  }
+  throw new Error("Windows could not open this app's key store, so the key was not saved. Quit VeryCuteDroidProxy from the tray, wait ten seconds, start it again, and enter the key again.");
+}
+
+async function encryptSecret(secret) {
+  const key = await requireStoredKey();
+  return secrets.encryptWithKey(key, secret).toString("base64");
 }
 
 function decryptSecret(encoded) {
+  const buffer = Buffer.from(encoded, "base64");
+  if (storedKey) {
+    const plain = secrets.decryptWithKey(storedKey, buffer);
+    if (plain !== null) return plain;
+  }
+  // The stored key is not loaded yet, or the value predates it.
   try {
-    return safeStorage.decryptString(Buffer.from(encoded, "base64"));
-  } catch (error) {
-    if (Date.now() - lastDecryptWarning > 60 * 1000) {
-      lastDecryptWarning = Date.now();
-      log(`Could not decrypt a saved API key (${error.message}); will retry`);
-    }
+    return safeStorage.decryptString(buffer);
+  } catch {
     return "";
   }
 }
-let lastDecryptWarning = 0;
+
+// Providers whose saved key cannot be decrypted. Apply keeps their models in
+// Factory and DeepSeek Harness instead of removing them.
+function unreadableApiProviders() {
+  return Object.entries(settings.apiProviders || {}).filter(([, entry]) => !decryptSecret(entry.keyEnc)).map(([key]) => key);
+}
+
+let reportedUnreadable = "";
+function reportUnreadableKeys() {
+  const keys = unreadableApiProviders();
+  if (keys.join(",") === reportedUnreadable) return;
+  reportedUnreadable = keys.join(",");
+  if (keys.length) log(`Saved API key cannot be read for ${keys.map((key) => API_PROVIDERS[key].label).join(", ")}. Enter it again under API keys; its models stay in Factory and DeepSeek Harness meanwhile.`);
+}
 
 // Decryption can fail transiently when Windows starts the app very early, which
 // used to drop every API provider from the backend config until the next
 // restart. Rewrite the config once all saved keys decrypt again.
 let apiProvidersInConfig = 0;
 function ensureApiKeysInConfig() {
+  if (!storedKey) loadStoredKey().then((key) => { if (key) ensureApiKeysInConfig(); });
+  reportUnreadableKeys();
   const saved = Object.keys(settings.apiProviders || {}).length;
   if (apiProvidersInConfig >= saved) return;
   const before = apiProvidersInConfig;
@@ -1216,13 +1262,10 @@ function factoryStatus() {
   try {
     const settingsJson = JSON.parse(fs.readFileSync(FACTORY_SETTINGS_PATH, "utf8"));
     const customModels = Array.isArray(settingsJson.customModels) ? settingsJson.customModels : [];
-    const expectedIds = new Set(factoryModels().map((model) => model.id));
-    const installedIds = new Set(customModels
-      .map((model) => model?.id)
-      .filter((id) => typeof id === "string" && DROIDPROXY_MODEL_PREFIXES.some((prefix) => id.startsWith(prefix))));
-    const installed = expectedIds.size > 0
-      && installedIds.size === expectedIds.size
-      && [...expectedIds].every((id) => installedIds.has(id));
+    const installed = isInstalled(customModels, factoryModels().map((model) => model.id), {
+      ownedPrefixes: DROIDPROXY_MODEL_PREFIXES,
+      unreadableProviders: unreadableApiProviders()
+    });
     return { installed, path: FACTORY_SETTINGS_PATH };
   } catch {
     return { installed: false, path: FACTORY_SETTINGS_PATH };
@@ -1239,14 +1282,10 @@ function applyFactoryModels() {
   }
 
   const existing = Array.isArray(factorySettings.customModels) ? factorySettings.customModels : [];
-  const kept = existing.filter((model) => {
-    const id = model?.id;
-    return typeof id !== "string" || !DROIDPROXY_MODEL_PREFIXES.some((prefix) => id.startsWith(prefix));
+  factorySettings.customModels = mergeCustomModels(existing, factoryModels(), {
+    ownedPrefixes: DROIDPROXY_MODEL_PREFIXES,
+    unreadableProviders: unreadableApiProviders()
   });
-
-  const startIndex = kept.length;
-  const nextModels = factoryModels().map((model, offset) => ({ ...model, index: startIndex + offset }));
-  factorySettings.customModels = [...kept, ...nextModels];
   fs.writeFileSync(FACTORY_SETTINGS_PATH, JSON.stringify(factorySettings, null, 2).replaceAll("\\/", "/"));
   return factoryStatus();
 }
@@ -1358,9 +1397,12 @@ if (!hasInstanceLock) {
     log(`Portable exe: ${process.env.PORTABLE_EXECUTABLE_FILE || "(not running from the portable exe)"}`);
     ensureDir(AUTH_DIR);
     // A leftover backend may be running from the runtime copy and lock it.
+    const keyLoad = loadStoredKey();
     await killOrphanedProxy();
     resourcesRoot = syncRuntimeResources();
     log(`Using resources from ${resourcesRoot}`);
+    if (!(await keyLoad)) log("The app's key store could not be read yet; saved API keys will be retried");
+    reportUnreadableKeys();
     fixApiKeyRegions();
     writeConfig();
     createTray();
@@ -1508,13 +1550,16 @@ function applyFactoryModes(choices) {
 function apiProviderState() {
   return Object.entries(API_PROVIDERS).map(([key, provider]) => {
     const configured = settings.apiProviders[key];
+    const readable = Boolean(configured && decryptSecret(configured.keyEnc));
     return {
       key,
       label: provider.label,
       region: configured?.region || Object.keys(provider.regions)[0],
       regions: Object.entries(provider.regions).map(([regionKey, region]) => ({ key: regionKey, label: region.label, residency: region.residency })),
       models: providerModels(key, configured?.region).map((model) => model.displayName),
-      configured: Boolean(configured && decryptSecret(configured.keyEnc))
+      configured: readable,
+      // A key is saved but cannot be decrypted; it has to be entered again.
+      unreadable: Boolean(configured && !readable)
     };
   });
 }
@@ -1538,14 +1583,19 @@ ipcMain.handle("routing:save", (_event, next) => {
 });
 ipcMain.handle("modes:get", () => factoryModesState());
 ipcMain.handle("modes:apply", (_event, choices) => applyFactoryModes(choices));
-ipcMain.handle("apikeys:list", () => apiProviderState());
-ipcMain.handle("apikeys:set", (_event, { provider, apiKey, region }) => {
+ipcMain.handle("apikeys:list", async () => {
+  await loadStoredKey();
+  return apiProviderState();
+});
+ipcMain.handle("apikeys:set", async (_event, { provider, apiKey, region }) => {
   if (!API_PROVIDERS[provider]) throw new Error("Unknown provider");
   const current = settings.apiProviders[provider];
   const key = String(apiKey || "").trim();
   if (!key && !current) throw new Error("Enter an API key first.");
-  const keyEnc = key ? encryptSecret(key) : current.keyEnc;
-  const effectiveRegion = regionForKey(provider, key || decryptSecret(current.keyEnc), region);
+  const savedKey = current ? decryptSecret(current.keyEnc) : "";
+  if (!key && !savedKey) throw new Error("The saved key cannot be read. Enter the API key again.");
+  const keyEnc = key ? await encryptSecret(key) : current.keyEnc;
+  const effectiveRegion = regionForKey(provider, key || savedKey, region);
   saveSettings({ apiProviders: { ...settings.apiProviders, [provider]: { region: effectiveRegion, keyEnc } } });
   log(`API key saved for ${API_PROVIDERS[provider].label} (${providerRegion(provider, effectiveRegion).label})`);
   return apiProviderState();
@@ -1636,16 +1686,16 @@ ipcMain.handle("manager:openFolder", () => {
 const frontOrigin = () => `http://${settings.host}:${settings.port}`;
 ipcMain.handle("dsh:state", () => dsh.state(frontOrigin()));
 ipcMain.handle("dsh:apply", () => {
-  const results = dsh.apply(factoryModels(), frontOrigin());
-  log(`DeepSeek Harness: ${results.map((item) => `${item.profile} ${item.changed ? `updated (${item.models} models)` : "already current"}`).join(", ")}`);
+  const results = dsh.apply(factoryModels(), frontOrigin(), undefined, { keepModelPrefixes: unreadableApiProviders() });
+  log(`DeepSeek Harness: ${results.map((item) => `${item.profile} ${item.changed ? `updated (${item.models} models)` : "already current"}${item.kept.length ? `, kept ${item.kept.join(", ")} until the API key is entered again` : ""}`).join(", ")}`);
   return dsh.state(frontOrigin());
 });
 
 ipcMain.handle("media:state", () => mediaState());
-ipcMain.handle("media:setKey", (_event, apiKey) => {
+ipcMain.handle("media:setKey", async (_event, apiKey) => {
   const key = String(apiKey || "").trim();
   if (!key) throw new Error("Enter an API key first.");
-  saveSettings({ googleMedia: { keyEnc: encryptSecret(key) } });
+  saveSettings({ googleMedia: { keyEnc: await encryptSecret(key) } });
   log("Google Gemini API key saved for voice and video");
   return mediaState();
 });

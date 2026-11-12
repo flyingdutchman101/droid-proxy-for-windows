@@ -261,8 +261,9 @@ async function refreshRouting() {
 // Configured providers stay visible; the rest fold into "Other providers".
 function renderApiProviders(providers) {
   const row = (provider) => apiProviderRow(provider);
-  const configured = providers.filter((provider) => provider.configured);
-  const others = providers.filter((provider) => !provider.configured);
+  // A provider whose saved key cannot be read stays in view so it gets fixed.
+  const configured = providers.filter((provider) => provider.configured || provider.unreadable);
+  const others = providers.filter((provider) => !provider.configured && !provider.unreadable);
   const wasOpen = document.querySelector("#other-api-providers")?.open;
   document.querySelector("#api-provider-list").innerHTML = configured.map(row).join("") + (others.length ? `
     <details id="other-api-providers" class="other-providers" ${wasOpen || !configured.length ? "open" : ""}>
@@ -282,14 +283,16 @@ function apiProviderRow(provider) {
       </div>
       <div class="api-controls">
         <select class="api-region">${regions}</select>
-        <input class="api-key" type="password" placeholder="${provider.configured ? "Key saved (enter a new one to replace)" : "API key"}" autocomplete="off" spellcheck="false" />
+        <input class="api-key" type="password" placeholder="${provider.configured ? "Key saved (enter a new one to replace)" : provider.unreadable ? "Enter the API key again" : "API key"}" autocomplete="off" spellcheck="false" />
         <button class="primary small api-save">Save</button>
-        ${provider.configured ? `<button class="small api-clear">Remove</button>` : ""}
+        ${provider.configured || provider.unreadable ? `<button class="small api-clear">Remove</button>` : ""}
       </div>
       <div class="provider-accounts">
         ${provider.configured
           ? `<div class="authorized"><span class="auth-badge">Authorized</span><span class="auth-email">API key saved</span></div>`
-          : `<div class="authorized none">No key</div>`}
+          : provider.unreadable
+            ? `<div class="authorized none">The saved key can't be read. Enter it again; its models are kept meanwhile.</div>`
+            : `<div class="authorized none">No key</div>`}
       </div>
     </div>`;
 }

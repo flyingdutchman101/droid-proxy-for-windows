@@ -19,7 +19,7 @@ npm run check
 npm run build:win
 ```
 
-Use `npm run check` as the default validator for code changes.
+Use `npm run check` as the default validator for code changes, and `npm test` when touching `src/dsh.js`, `src/secrets.js`, or `src/factory-sync.js`.
 
 ## Conventions
 
