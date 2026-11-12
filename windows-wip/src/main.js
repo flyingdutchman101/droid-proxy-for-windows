@@ -151,8 +151,10 @@ const FACTORY_MODELS = [
   // Antigravity only serves this to paid (non-trial) Google AI Pro/Ultra accounts.
   geminiModel("gemini-4-argon-high", "DroidProxy: Gemini 4 Argon (High)"),
   // Google's frontier coding / long-horizon model (Oct 2026); served on
-  // Google AI Ultra through Antigravity.
-  geminiModel("gemini-4-carbon-high", "DroidProxy: Gemini 4 Carbon (High)", ["high"], { maxContextLimit: 1048576 }),
+  // Google AI Ultra through Antigravity. Google rejects anything over 1,048,576
+  // tokens and counts tokens differently from Factory, so Factory is told
+  // 900k to compact with headroom.
+  geminiModel("gemini-4-carbon-high", "DroidProxy: Gemini 4 Carbon (High)", ["high"], { maxContextLimit: 900000 }),
   // Claude served by the Google AI Pro/Ultra subscription instead of a Claude one.
   // The ag- aliases are rewritten to Antigravity's IDs in proxy.js, as on macOS.
   geminiModel("ag-c55o-high", "DroidProxy: Claude Opus 5.5 (High) via Google", ["high"], { maxOutputTokens: 128000, maxContextLimit: 1000000 }),
