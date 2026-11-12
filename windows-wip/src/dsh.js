@@ -90,6 +90,36 @@ function stamp() {
   return new Date().toISOString().replace(/[-:]/g, "").replace(/\..+/, "");
 }
 
+function credentialsFile(home = dshHome()) {
+  return path.join(home, ".credentials.yaml");
+}
+
+// DSH resolves each route's `apiKeyEnv` through its credential seam, and a
+// reference that resolves to nothing fails every request with
+// MISSING_CREDENTIAL. DroidProxy ignores the Authorization header, so the value
+// only has to exist; never overwrite a reference the user already set.
+function ensureCredentialRef(keyRef, home = dshHome()) {
+  const file = credentialsFile(home);
+  let doc;
+  try {
+    const existing = fs.existsSync(file) ? fs.readFileSync(file, "utf8") : "";
+    doc = existing.trim() ? YAML.parseDocument(existing) : new YAML.Document(null);
+    if (doc.errors.length) return { created: false, ref: keyRef, reason: `credentials YAML has errors (${doc.errors[0].message})` };
+  } catch (error) {
+    return { created: false, ref: keyRef, reason: error.message };
+  }
+  try {
+    if (!YAML.isMap(doc.contents)) doc.contents = doc.createNode({ version: 1, records: {}, refs: {} });
+    if (!YAML.isMap(doc.get("refs", true))) doc.set("refs", doc.createNode({}));
+    if (doc.getIn(["refs", keyRef]) !== undefined) return { created: false, ref: keyRef, reason: "already present" };
+    doc.setIn(["refs", keyRef], "droidproxy-local");
+    fs.writeFileSync(file, doc.toString({ lineWidth: 0 }));
+    return { created: true, ref: keyRef };
+  } catch (error) {
+    return { created: false, ref: keyRef, reason: error.message };
+  }
+}
+
 // Rewrites only DroidProxy's routes inside the pi-ai entry; every other patch
 // entry, provider and comment in the file is kept.
 function applyToProfile(profile, models, origin, home = dshHome()) {
@@ -120,11 +150,11 @@ function applyToProfile(profile, models, origin, home = dshHome()) {
   for (const [key, value] of Object.entries(providers)) providersNode.set(key, doc.createNode(value));
   entry.commentBefore = MARKER;
   const text = doc.toString({ lineWidth: 0 });
-  if (text === existing) return { profile, changed: false, models: models.length };
+  if (text === existing) return { profile, changed: false, models: models.length, credential: ensureCredentialRef(keyRef, home) };
   fs.mkdirSync(path.dirname(file), { recursive: true });
   if (existing) fs.copyFileSync(file, `${file}.droidproxy-${stamp()}.bak`);
   fs.writeFileSync(file, text);
-  return { profile, changed: true, models: Object.values(providers).reduce((sum, provider) => sum + provider.models.length, 0) };
+  return { profile, changed: true, models: Object.values(providers).reduce((sum, provider) => sum + provider.models.length, 0), credential: ensureCredentialRef(keyRef, home) };
 }
 
 function apply(models, origin, home = dshHome()) {
@@ -158,4 +188,4 @@ function state(origin, home = dshHome()) {
   return result;
 }
 
-module.exports = { apply, applyToProfile, state, buildProviders, routeFor, modelEntry, dshHome, ROUTES };
+module.exports = { apply, applyToProfile, state, buildProviders, routeFor, modelEntry, dshHome, ensureCredentialRef, ROUTES };
