@@ -102,6 +102,7 @@ const DEFAULT_CHAINS = {
   "gpt-6-luna": ["claude-haiku-5-5", "gemini-3.8-flash-high"],
   "gemini-4-argon-high": ["claude-opus-5-5", "gpt-6.1-sol"],
   "gemini-4-carbon-high": ["gemini-4-argon-high", "claude-opus-5-5", "gpt-6.1-sol"],
+  "gemini-4-hydrogen-xhigh": ["gemini-4-argon-high", "claude-sonnet-5-5", "gpt-6.1-sol"],
   "gemini-3.8-flash-high": ["claude-haiku-5-5", "gpt-6-luna"],
   "kimi-k3": ["claude-sonnet-5-5", "gpt-6.1-sol"],
   "kimi-k2.6": ["claude-sonnet-5-5", "gpt-6.1-sol"]

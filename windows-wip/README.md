@@ -26,7 +26,7 @@ Electron-based Windows app that runs the bundled [CLIProxyAPI](https://github.co
   - Auto
   - GPT 6 Astra, GPT 6.1 Sol, GPT 6.1 Terra, GPT 6 Luna
   - Claude Fable 5.2, Fable 5.1, Opus 5.5, Sonnet 5.5, Haiku 5.5
-  - Gemini 3.8 Flash (High), Gemini 4 Argon (High), Gemini 4 Carbon (High)
+  - Gemini 3.8 Flash (High), Gemini 4 Argon (High), Gemini 4 Carbon (High), Gemini 4 Hydrogen (XHigh)
   - Claude Opus 5.5 (High) and Sonnet 5.5 (High) via Google, billed to Google AI Pro/Ultra
   - Kimi K3, Kimi K2.6 (Kimi Code)
   - Models for every API-key provider you configure
@@ -73,7 +73,7 @@ npm run icon   # re-render resources/icon.png and icon.ico from resources/icon.s
 
 ## Updating the backend
 
-`resources/bin/cli-proxy-api.exe` is the official CLIProxyAPI Windows amd64 build (currently 8.0.67). To update it, download `CLIProxyAPI_<version>_windows_amd64.zip` from the [CLIProxyAPI releases](https://github.com/router-for-me/CLIProxyAPI/releases), verify it against that release's `checksums.txt`, and replace the exe.
+`resources/bin/cli-proxy-api.exe` is the official CLIProxyAPI Windows amd64 build (currently 8.0.76). To update it, download `CLIProxyAPI_<version>_windows_amd64.zip` from the [CLIProxyAPI releases](https://github.com/router-for-me/CLIProxyAPI/releases), verify it against that release's `checksums.txt`, and replace the exe.
 
 ## Credits
 

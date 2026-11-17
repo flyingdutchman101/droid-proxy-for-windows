@@ -1,6 +1,6 @@
 {
   "name": "droidproxy-windows",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Droid Proxy for Windows: Codex, Claude, and Gemini OAuth proxy for Factory custom models.",
   "main": "src/main.js",
   "scripts": {

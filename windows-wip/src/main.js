@@ -158,6 +158,10 @@ const FACTORY_MODELS = [
   // tokens and counts tokens differently from Factory, so Factory is told
   // 900k to compact with headroom.
   geminiModel("gemini-4-carbon-high", "DroidProxy: Gemini 4 Carbon (High)", ["high"], { maxContextLimit: 900000 }),
+  // Google's fast execution model adapted from Carbon (Nov 2026), on Google AI
+  // Pro/Ultra through Antigravity (CLIProxyAPI 8.0.73+). Same 1,048,576-token
+  // hard limit as Carbon, so the same 900k headroom.
+  geminiModel("gemini-4-hydrogen-xhigh", "DroidProxy: Gemini 4 Hydrogen (XHigh)", ["xhigh"], { maxContextLimit: 900000 }),
   // Claude served by the Google AI Pro/Ultra subscription instead of a Claude one.
   // The ag- aliases are rewritten to Antigravity's IDs in proxy.js, as on macOS.
   geminiModel("ag-c55o-high", "DroidProxy: Claude Opus 5.5 (High) via Google", ["high"], { maxOutputTokens: 128000, maxContextLimit: 1000000 }),
@@ -187,6 +191,7 @@ const BASE_MODEL_IDS = {
   "gemini-3.8-flash-high": "gemini-3.8-flash",
   "gemini-4-argon-high": "gemini-3.8-flash",
   "gemini-4-carbon-high": "gemini-3.8-flash",
+  "gemini-4-hydrogen-xhigh": "gemini-3.8-flash",
   "ag-c55o-high": "claude-opus-5-5",
   "ag-c55s-high": "claude-sonnet-5-5",
   "kimi-k3": "kimi-k3",
